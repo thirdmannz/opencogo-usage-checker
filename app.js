@@ -40,6 +40,25 @@ function workspaceUsageUrl(workspaceUrl) {
   return base ? `${base}/usage` : null;
 }
 
+function normalizeProvider(provider, name = '') {
+  const loweredName = String(name || '').trim().toLowerCase();
+  if (/@(gmail|googlemail)\.com$/.test(loweredName)) return 'google';
+  const raw = String(provider || '').trim().toLowerCase();
+  if (raw === 'google' || raw === 'github') return raw;
+  return 'github';
+}
+
+function providerLabel(provider, name = '') {
+  const value = normalizeProvider(provider, name);
+  return value === 'google' ? 'Google' : 'GitHub';
+}
+
+function formatMoney(amount, digits = 4) {
+  const value = Number.parseFloat(amount);
+  if (!Number.isFinite(value)) return `$0.${'0'.repeat(digits)}`;
+  return `$${value.toFixed(digits)}`;
+}
+
 function parseGoLimitText(body) {
   const lines = String(body || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const labels = [
@@ -380,14 +399,36 @@ function listAccounts() {
   });
 }
 
+function inferProviderFromSessionState(name) {
+  const file = sessionStateFile(name);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const state = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const cookies = Array.isArray(state.cookies) ? state.cookies : [];
+    const domains = cookies.map(cookie => String(cookie?.domain || '').toLowerCase());
+    if (domains.some(domain => domain.includes('google.com') || domain.includes('gstatic.com'))) return 'google';
+    if (domains.some(domain => domain.includes('github.com') || domain.includes('githubusercontent.com'))) return 'github';
+  } catch {}
+  return null;
+}
+
 function accountMeta(name) {
   const df = dataFile(name);
   const loggedIn = fs.existsSync(sessionStateFile(name));
-  if (!fs.existsSync(df)) return { name, status: 'no-data', loggedIn };
+  if (!fs.existsSync(df)) {
+    return { name, status: 'no-data', loggedIn, provider: normalizeProvider(inferProviderFromSessionState(name), name) };
+  }
   try {
     const d = JSON.parse(fs.readFileSync(df, 'utf-8'));
-    return { name, loggedIn, ...d };
-  } catch { return { name, status: 'parse-error', loggedIn }; }
+    return {
+      name,
+      loggedIn,
+      ...d,
+      provider: normalizeProvider(d.provider || d.authProvider || d.loginProvider || inferProviderFromSessionState(name), name),
+    };
+  } catch {
+    return { name, status: 'parse-error', loggedIn, provider: normalizeProvider(inferProviderFromSessionState(name), name) };
+  }
 }
 
 function saveAccountData(name, data) {
@@ -527,7 +568,7 @@ async function runLoginFlow(name, provider = 'github', { returnStateOnly = false
           safeRmDir(pdir, name);
           copyDir(tempProfileDir, pdir);
           fs.copyFileSync(stateFile, sessionStateFile(name));
-          saveAccountData(name, { name, provider: cleanProvider, savedAt: new Date().toISOString(), status: 'saved', workspaceUrl: workspaceUrl || null });
+          saveAccountData(name, { name, provider: normalizeProvider(cleanProvider, name), savedAt: new Date().toISOString(), status: 'saved', workspaceUrl: workspaceUrl || null });
           console.log(`[add] Session saved for "${name}"\n`);
           saved = true;
         } else {
@@ -556,7 +597,7 @@ async function runLoginFlow(name, provider = 'github', { returnStateOnly = false
         safeRmDir(pdir, name);
         copyDir(tempProfileDir, pdir);
         fs.copyFileSync(verify.storageStateFile, sessionStateFile(name));
-        saveAccountData(name, { name, provider: cleanProvider, savedAt: new Date().toISOString(), status: 'saved', workspaceUrl: workspaceUrl || null });
+        saveAccountData(name, { name, provider: normalizeProvider(cleanProvider, name), savedAt: new Date().toISOString(), status: 'saved', workspaceUrl: workspaceUrl || null });
         console.log(`[add] Session saved for "${name}" (fallback)\n`);
       }
       saved = true;
@@ -665,6 +706,7 @@ async function scrapeAccount(name) {
       }
 
       const existingData = fs.existsSync(dataFile(name)) ? JSON.parse(fs.readFileSync(dataFile(name), 'utf8')) : {};
+      const existingProvider = existingData.provider || existingData.authProvider || existingData.loginProvider || null;
       const candidateUrls = [
         rootPage.url(),
         existingData._url,
@@ -789,10 +831,19 @@ async function scrapeAccount(name) {
         data._raw = body.substring(0, 5000);
         data._url = window.location.href;
         data._timestamp = new Date().toISOString();
+        data._workspace = Array.from(document.querySelectorAll('a[href*="/workspace/"]')).map(a => a.href).find(Boolean) || null;
         return data;
       });
 
-      const output = { name, scrapedAt: new Date().toISOString(), workspaceUrl, goUrl: goUrlFinal || goUrl, goLimits, ...result };
+      const output = {
+        name,
+        scrapedAt: new Date().toISOString(),
+        workspaceUrl,
+        goUrl: goUrlFinal || goUrl,
+        goLimits,
+        ...result,
+        provider: normalizeProvider(existingProvider || result.provider, name),
+      };
       saveAccountData(name, output);
       return output;
     } catch (err) {

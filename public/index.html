@@ -85,6 +85,80 @@
       padding: 12px;
     }
     .usageValue { font-size: 24px; font-weight: 750; letter-spacing: -0.02em; }
+    .providerBadge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .summaryMeta {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .summaryPills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .summaryPill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .summaryPill strong { color: var(--text); }
+    .summaryCardBody {
+      display: grid;
+      gap: 10px;
+    }
+    .summaryRow {
+      display: grid;
+      gap: 4px;
+    }
+    .summaryLabel {
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .summaryValue {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    .summaryValue.tight {
+      font-size: 26px;
+    }
+    .summaryFoot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .summaryFoot .summaryPill {
+      max-width: 100%;
+    }
+    .summaryCost {
+      display: grid;
+      gap: 6px;
+    }
+    .summaryCost .big { margin: 0; }
     @media (max-width: 760px) {
       .usageGrid { grid-template-columns: 1fr; }
     }
@@ -160,6 +234,18 @@
 
     function fmt(v) { return (v === undefined || v === null || v === '') ? '—' : v; }
     function safeText(v) { return (v === undefined || v === null || v === '') ? '—' : String(v); }
+    function providerLabel(provider, name = '') {
+      const lowerName = String(name || '').toLowerCase();
+      if (/@(gmail|googlemail)\.com$/.test(lowerName)) return 'Google';
+      const raw = String(provider || '').toLowerCase();
+      if (raw === 'google') return 'Google';
+      return 'GitHub';
+    }
+    function formatMoney(amount, digits = 4) {
+      const value = Number.parseFloat(amount);
+      if (!Number.isFinite(value)) return `$0.${'0'.repeat(digits)}`;
+      return `$${value.toFixed(digits)}`;
+    }
     function statusClass(meta) {
       if (meta.error) return 'status-bad';
       if (!meta.scrapedAt) return 'status-warn';
@@ -170,12 +256,52 @@
       const total = accounts.length;
       const ok = accounts.filter(a => !a.error).length;
       const withCost = accounts.filter(a => a.totalCost !== undefined && a.totalCost !== null).length;
-      const sumCost = accounts.reduce((n, a) => n + (parseFloat(a.totalCost) || 0), 0).toFixed(2);
+      const sumCost = accounts.reduce((n, a) => n + (parseFloat(a.totalCost) || 0), 0);
+      const providers = accounts.reduce((acc, a) => {
+        const key = String(a.provider || 'github').toLowerCase();
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+      const topProvider = Object.entries(providers).sort((a, b) => b[1] - a[1])[0] || ['github', 0];
       summaryEl.innerHTML = `
-        <div class="card"><h3>Accounts</h3><div class="big">${total}</div><div class="muted">Saved login sessions</div></div>
-        <div class="card"><h3>Healthy</h3><div class="big">${ok}</div><div class="muted">Can read the portal</div></div>
-        <div class="card"><h3>Cost parsed</h3><div class="big">${withCost}</div><div class="muted">Has Total Cost data</div></div>
-        <div class="card"><h3>Total cost</h3><div class="big">$${sumCost}</div><div class="muted">All accounts combined</div></div>
+        <div class="card">
+          <h3>Accounts</h3>
+          <div class="summaryCardBody">
+            <div class="summaryRow">
+              <div class="summaryLabel">Saved sessions</div>
+              <div class="summaryValue">${total}</div>
+            </div>
+            <div class="summaryFoot">
+              <span class="summaryPill"><strong>${providers.github || 0}</strong> GitHub</span>
+              <span class="summaryPill"><strong>${providers.google || 0}</strong> Google</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Healthy</h3>
+          <div class="summaryCardBody">
+            <div class="summaryRow">
+              <div class="summaryLabel">Readable accounts</div>
+              <div class="summaryValue">${ok}</div>
+            </div>
+            <div class="summaryFoot">
+              <span class="summaryPill">Portal OK</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Total cost</h3>
+          <div class="summaryCardBody">
+            <div class="summaryRow">
+              <div class="summaryLabel">Spend</div>
+              <div class="summaryValue tight">$${sumCost.toFixed(2)}</div>
+            </div>
+            <div class="summaryFoot">
+              <span class="summaryPill"><strong>${withCost}</strong> rows</span>
+              <span class="summaryPill">Top source <strong>${safeText(topProvider[0])}</strong></span>
+            </div>
+          </div>
+        </div>
       `;
     }
 
@@ -220,14 +346,25 @@
 
     function renderRows(accounts) {
       rowsEl.innerHTML = accounts.map(a => {
+        const provider = providerLabel(a.provider, a.name);
+        const totalCost = a.totalCost !== undefined && a.totalCost !== null ? formatMoney(a.totalCost, 4) : '—';
+        const balance = a.currentBalance !== undefined && a.currentBalance !== null ? formatMoney(a.currentBalance, 2) : '—';
         return `
           <tr data-account="${safeText(a.name)}">
             <td>
               <div><strong>${safeText(a.name)}</strong></div>
-              <div class="small muted mono">${safeText(a.provider || 'github')}</div>
+              <div class="small muted mono"><span class="providerBadge">${provider}</span></div>
             </td>
             <td>${statusMarkup(a)}</td>
-            <td>${renderUsageLimits(a)}</td>
+            <td>
+              ${renderUsageLimits(a)}
+              <div class="summaryMeta">
+                <div class="summaryPills">
+                  <span class="summaryPill">Current balance <strong>${balance}</strong></span>
+                  <span class="summaryPill">Total cost <strong>${totalCost}</strong></span>
+                </div>
+              </div>
+            </td>
             <td><button class="delBtn" data-delete-name="${safeText(a.name)}">Delete</button></td>
           </tr>
         `;
