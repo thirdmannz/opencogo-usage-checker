@@ -191,6 +191,7 @@
           <div class="usageCard">
             <div class="small muted" style="margin-bottom:2px">${safeText(limit.label).replace(' Usage', '')}</div>
             <div class="usageValue" style="color:${color}">${safeText(limit.percentage)}</div>
+            <div class="small muted">${safeText(limit.reset || '—')}</div>
           </div>`;
       }).join('')}</div>`;
     }
