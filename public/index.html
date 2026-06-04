@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCode Go Usage Dashboard</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #121822;
+      --panel-2: #171f2b;
+      --line: rgba(255,255,255,0.08);
+      --text: #e7eef8;
+      --muted: #8fa3bc;
+      --accent: #5b8cff;
+      --good: #35c759;
+      --warn: #ffb020;
+      --bad: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #090c11 0%, #0b0f14 100%);
+      color: var(--text);
+      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    .top {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; margin-bottom: 18px;
+    }
+    h1 { margin: 0; font-size: 22px; font-weight: 700; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .btns { display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+      padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 600;
+    }
+    button.primary { background: var(--accent); border-color: transparent; color: white; }
+    button:hover { filter: brightness(1.08); }
+    .grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px;
+      margin: 16px 0 22px;
+    }
+    .card {
+      background: rgba(18, 24, 34, 0.9); border: 1px solid var(--line);
+      border-radius: 16px; padding: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+    }
+    .card h3 { margin: 0 0 10px; font-size: 15px; }
+    .metric { display:flex; justify-content:space-between; gap:12px; margin: 6px 0; }
+    .metric span:first-child { color: var(--muted); }
+    .big { font-size: 28px; font-weight: 800; margin: 6px 0 12px; }
+    .tableWrap { overflow:auto; border:1px solid var(--line); border-radius:16px; background: rgba(18,24,34,0.9); }
+    table { width:100%; border-collapse: collapse; min-width: 780px; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align:left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #131a25; z-index: 1; color: #c9d7ea; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .muted { color: var(--muted); }
+    .right { text-align:right; }
+    .small { font-size: 12px; }
+    .delBtn {
+      background: rgba(255,107,107,0.12); color: #ff9a9a; border: 1px solid rgba(255,107,107,0.25);
+      padding: 4px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600;
+    }
+    .delBtn:hover { background: rgba(255,107,107,0.3); }
+    .delBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .status { margin-top: 12px; color: var(--muted); }
+    .loading { opacity: 0.7; }
+    .err { color: var(--bad); }
+    .statusCell { display: grid; gap: 4px; }
+    .statusLine { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
+    .statusDot { width: 8px; height: 8px; border-radius: 999px; background: currentColor; flex: none; }
+    .status-good { color: var(--good); }
+    .status-warn { color: var(--warn); }
+    .status-bad { color: var(--bad); }
+    .usageGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .usageCard {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.02);
+      min-height: 72px;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+    }
+    .usageValue { font-size: 24px; font-weight: 750; letter-spacing: -0.02em; }
+    @media (max-width: 760px) {
+      .usageGrid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+  <div class="top">
+    <div>
+      <h1>OpenCode Go Usage Dashboard</h1>
+      <div class="sub">Reads local login sessions and shows current usage. Auto-refresh runs every 60 seconds. Port 3333.</div>
+    </div>
+    <div>
+      <div class="btns">
+        <button class="primary" id="refreshBtn">Refresh all</button>
+        <button id="scrapeBtn">Rescrape</button>
+        <button id="addGitHubBtn">Add GitHub</button>
+        <button id="addGoogleBtn">Add Google</button>
+      </div>
+      <div class="sub" id="loginHint">Add an account. A new browser opens, then saves automatically after login.</div>
+    </div>
+  </div>
+
+  <div class="grid" id="summary"></div>
+  <div class="status" id="autoStatus">Auto refresh: on, every 60 seconds.</div>
+
+  <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 0;">
+    <div class="card"><h3>Next check</h3><div class="big" id="countdown">60s</div><div class="muted">Front end polls once per minute</div></div>
+    <div class="card"><h3>Server status</h3><div class="big" id="serverState">—</div><div class="muted">From /api/status</div></div>
+    <div class="card"><h3>Login status</h3><div class="big" id="addState">—</div><div class="muted" id="addStateSub">Idle</div></div>
+  </div>
+
+  <div class="tableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th>Status</th>
+          <th>Usage</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="status" id="status">Loading…</div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const autoStatusEl = document.getElementById('autoStatus');
+    const countdownEl = document.getElementById('countdown');
+    const serverStateEl = document.getElementById('serverState');
+    const rowsEl = document.getElementById('rows');
+    const summaryEl = document.getElementById('summary');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const scrapeBtn = document.getElementById('scrapeBtn');
+    const addGitHubBtn = document.getElementById('addGitHubBtn');
+    const addGoogleBtn = document.getElementById('addGoogleBtn');
+    const addStateEl = document.getElementById('addState');
+    const addStateSubEl = document.getElementById('addStateSub');
+    const loginHintEl = document.getElementById('loginHint');
+
+    let addStatusTimer = null;
+    let addPendingName = null;
+    let addPendingProvider = null;
+
+    const intervalMs = 60000;
+    let countdown = intervalMs / 1000;
+    let refreshTimer = null;
+    let countdownTimer = null;
+
+    function fmt(v) { return (v === undefined || v === null || v === '') ? '—' : v; }
+    function safeText(v) { return (v === undefined || v === null || v === '') ? '—' : String(v); }
+    function statusClass(meta) {
+      if (meta.error) return 'status-bad';
+      if (!meta.scrapedAt) return 'status-warn';
+      return 'status-good';
+    }
+
+    function renderSummary(accounts) {
+      const total = accounts.length;
+      const ok = accounts.filter(a => !a.error).length;
+      const withCost = accounts.filter(a => a.totalCost !== undefined && a.totalCost !== null).length;
+      const sumCost = accounts.reduce((n, a) => n + (parseFloat(a.totalCost) || 0), 0).toFixed(2);
+      summaryEl.innerHTML = `
+        <div class="card"><h3>Accounts</h3><div class="big">${total}</div><div class="muted">Saved login sessions</div></div>
+        <div class="card"><h3>Healthy</h3><div class="big">${ok}</div><div class="muted">Can read the portal</div></div>
+        <div class="card"><h3>Cost parsed</h3><div class="big">${withCost}</div><div class="muted">Has Total Cost data</div></div>
+        <div class="card"><h3>Total cost</h3><div class="big">$${sumCost}</div><div class="muted">All accounts combined</div></div>
+      `;
+    }
+
+    function renderUsageLimits(a) {
+      const limits = Array.isArray(a.goLimits) ? a.goLimits : [];
+      if (!limits.length) {
+        return `<div class="muted small">No usage data</div>`;
+      }
+      return `<div class="usageGrid">${limits.map(limit => {
+        const pct = Number.parseFloat(String(limit.percentValue ?? limit.percentage ?? '0')) || 0;
+        const color = pct >= 90 ? 'var(--bad)' : pct >= 70 ? 'var(--warn)' : 'var(--accent)';
+        return `
+          <div class="usageCard">
+            <div class="small muted" style="margin-bottom:2px">${safeText(limit.label).replace(' Usage', '')}</div>
+            <div class="usageValue" style="color:${color}">${safeText(limit.percentage)}</div>
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    function statusMarkup(a) {
+      if (a.error) {
+        return `
+          <div class="statusCell">
+            <div class="statusLine status-bad"><span class="statusDot"></span><span>Error</span></div>
+            <div class="small muted">${safeText(a.error)}</div>
+          </div>`;
+      }
+      if (!a.scrapedAt) {
+        return `
+          <div class="statusCell">
+            <div class="statusLine status-warn"><span class="statusDot"></span><span>Pending</span></div>
+            <div class="small muted">Waiting for first sync</div>
+          </div>`;
+      }
+      return `
+        <div class="statusCell">
+          <div class="statusLine status-good"><span class="statusDot"></span><span>Updated</span></div>
+          <div class="small muted">${a.scrapedAt ? new Date(a.scrapedAt).toLocaleString() : '—'}</div>
+        </div>`;
+    }
+
+    function renderRows(accounts) {
+      rowsEl.innerHTML = accounts.map(a => {
+        return `
+          <tr data-account="${safeText(a.name)}">
+            <td>
+              <div><strong>${safeText(a.name)}</strong></div>
+              <div class="small muted mono">${safeText(a.provider || 'github')}</div>
+            </td>
+            <td>${statusMarkup(a)}</td>
+            <td>${renderUsageLimits(a)}</td>
+            <td><button class="delBtn" data-delete-name="${safeText(a.name)}">Delete</button></td>
+          </tr>
+        `;
+      }).join('');
+
+      rowsEl.querySelectorAll('[data-delete-name]').forEach(btn => {
+        btn.addEventListener('click', () => deleteAccount(btn.dataset.deleteName));
+      });
+    }
+
+    async function loadStatus() {
+      try {
+        const res = await fetch('/api/status?ts=' + Date.now());
+        const status = await res.json();
+        serverStateEl.textContent = status.autoScrapeRunning ? 'Running' : 'Idle';
+        autoStatusEl.textContent = `Auto refresh: ${status.autoScrapeRunning ? 'running' : 'idle'}, every ${Math.round((status.intervalMs || intervalMs) / 1000)} seconds.`;
+      } catch (e) {
+        serverStateEl.textContent = 'Offline';
+        autoStatusEl.textContent = 'Auto refresh: status fetch failed.';
+      }
+    }
+
+    async function loadAddStatus() {
+      try {
+        const res = await fetch('/api/add-status?ts=' + Date.now());
+        const state = await res.json();
+        addStateEl.textContent = state.status || 'idle';
+        if (state.status === 'idle') {
+          addStateSubEl.textContent = 'Idle';
+        } else if (state.status === 'opening') {
+          addStateSubEl.textContent = `Opening browser: ${state.name || '—'}`;
+        } else if (state.status === 'logging_in') {
+          addStateSubEl.textContent = `Waiting for login in the browser: ${state.name || '—'}`;
+        } else if (state.status === 'saving') {
+          addStateSubEl.textContent = `Saving session: ${state.name || '—'}`;
+        } else if (state.status === 'done') {
+          addStateSubEl.textContent = `Done: ${state.name || '—'}`;
+        } else if (state.status === 'error') {
+          addStateSubEl.textContent = state.error || 'Login failed';
+        } else {
+          addStateSubEl.textContent = state.name || '—';
+        }
+      } catch (e) {
+        addStateEl.textContent = 'Offline';
+        addStateSubEl.textContent = 'Cannot read login status';
+      }
+    }
+
+    async function pollAddStatusUntilDone() {
+      if (addStatusTimer) clearInterval(addStatusTimer);
+      await loadAddStatus();
+      addStatusTimer = setInterval(async () => {
+        await loadAddStatus();
+        try {
+          const res = await fetch('/api/add-status?ts=' + Date.now());
+          const state = await res.json();
+          if (state.status === 'done' || state.status === 'error' || state.status === 'idle') {
+            clearInterval(addStatusTimer);
+            addStatusTimer = null;
+            addPendingName = null;
+            addPendingProvider = null;
+            loginHintEl.textContent = 'Add an account. A new browser opens, then saves automatically after login.';
+            await refreshAll();
+          }
+        } catch {}
+      }, 3000);
+    }
+
+    async function startAddAccount(provider) {
+      const name = prompt(`Enter ${provider} account name (for example github-1 / google-1)`);
+      if (!name) return;
+      addPendingName = name;
+      addPendingProvider = provider;
+      loginHintEl.textContent = `Login started: ${name} / ${provider}. Finish it in the new browser.`;
+      addStateEl.textContent = 'opening';
+      addStateSubEl.textContent = `Starting ${provider} login: ${name}`;
+      const res = await fetch(`/api/add-account/${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider })
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        addStateEl.textContent = 'error';
+        addStateSubEl.textContent = payload.error || 'Start failed';
+        loginHintEl.textContent = 'Add failed.';
+        return;
+      }
+      await pollAddStatusUntilDone();
+      await loadAccounts();
+    }
+
+    async function loadAccounts() {
+      statusEl.textContent = 'Loading accounts…';
+      try {
+        const res = await fetch('/api/accounts?ts=' + Date.now());
+        const accounts = await res.json();
+        renderSummary(accounts);
+        renderRows(accounts);
+        statusEl.textContent = `Loaded ${accounts.length} accounts.`;
+      } catch (e) {
+        statusEl.innerHTML = `<span class="err">Load failed:</span> ${e.message}`;
+      }
+    }
+
+    async function deleteAccount(name) {
+      if (!confirm(`Delete account "${name}"?\nThis removes the session cookie and usage data. It cannot be undone.`)) return;
+      statusEl.textContent = `Deleting: ${name}…`;
+      try {
+        const res = await fetch(`/api/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        const payload = await res.json();
+        if (payload.ok) {
+          statusEl.textContent = `Deleted: ${name}`;
+          await loadAccounts();
+        } else {
+          statusEl.innerHTML = `<span class="err">Delete failed:</span> ${payload.error || 'unknown'}`;
+        }
+      } catch (e) {
+        statusEl.innerHTML = `<span class="err">Delete failed:</span> ${e.message}`;
+      }
+    }
+
+    async function refreshAll() {
+      refreshBtn.disabled = true;
+      scrapeBtn.disabled = true;
+      try {
+        await Promise.all([loadAccounts(), loadStatus()]);
+      } finally {
+        refreshBtn.disabled = false;
+        scrapeBtn.disabled = false;
+      }
+    }
+
+    async function scrapeAll() {
+      statusEl.textContent = 'Refreshing… this opens the browser and updates each account.';
+      scrapeBtn.disabled = true;
+      refreshBtn.disabled = true;
+      try {
+        const res = await fetch('/api/refresh?ts=' + Date.now(), { method: 'POST' });
+        const payload = await res.json();
+        if (payload.results) {
+          renderSummary(payload.results);
+          renderRows(payload.results);
+          statusEl.textContent = `Done. Updated ${payload.count} accounts.`;
+        } else {
+          statusEl.innerHTML = `<span class="err">Refresh failed:</span> ${payload.error || 'unknown error'}`;
+        }
+        await loadStatus();
+      } catch (e) {
+        statusEl.innerHTML = `<span class="err">Refresh failed:</span> ${e.message}`;
+      } finally {
+        scrapeBtn.disabled = false;
+        refreshBtn.disabled = false;
+      }
+    }
+
+    function startTimers() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
+      countdown = intervalMs / 1000;
+      countdownEl.textContent = `${countdown}s`;
+      refreshTimer = setInterval(() => {
+        refreshAll();
+        countdown = intervalMs / 1000;
+      }, intervalMs);
+      countdownTimer = setInterval(() => {
+        countdown -= 1;
+        if (countdown <= 0) countdown = intervalMs / 1000;
+        countdownEl.textContent = `${countdown}s`;
+      }, 1000);
+    }
+
+    refreshBtn.addEventListener('click', refreshAll);
+    scrapeBtn.addEventListener('click', scrapeAll);
+    addGitHubBtn.addEventListener('click', () => void startAddAccount('github'));
+    addGoogleBtn.addEventListener('click', () => void startAddAccount('google'));
+    refreshAll();
+    loadAddStatus();
+    startTimers();
+  </script>
+</body>
+</html>
