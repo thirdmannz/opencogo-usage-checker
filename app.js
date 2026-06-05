@@ -851,6 +851,7 @@ async function scrapeAccount(name, _isRetry = false) {
       }
 
       const page = rootPage;
+      page.setDefaultTimeout(20000);
       const goUrl = workspaceGoUrl(workspaceUrl);
       let goLimits = [];
       let goUrlFinal = null;
@@ -994,7 +995,17 @@ async function scrapeAllAccounts() {
   const names = listAccounts();
   const results = [];
 
-  const ACCOUNT_TIMEOUT_MS = 60_000; // 60s per account max
+  // OVERALL safety: if the entire cycle takes > 5 minutes, force-return to unstick autoScrapeRunning
+  let done = false;
+  const overallTimer = setTimeout(() => {
+    if (!done) {
+      console.error('[scrapeAllAccounts] OVERALL TIMEOUT after 5min — force-returning');
+      killNewHeadlessChromePids([]);
+    }
+  }, 5 * 60 * 1000);
+
+  try {
+    const ACCOUNT_TIMEOUT_MS = 60_000; // 60s per account max
 
   for (const name of names) {
     try {
@@ -1024,19 +1035,20 @@ async function scrapeAllAccounts() {
       try { global.gc(); } catch {}
     }
   }
-  lastAutoScrapeAt = new Date().toISOString();
-  lastAutoScrapeResult = results;
-  // Push to all SSE clients
-  sseSend('scrape-complete', { at: lastAutoScrapeAt, count: results.length, results });
-  // Clean ALL headless Chrome PIDs that may have leaked (also kills ones from this cycle — OK because accounts are saved to disk)
-  killNewHeadlessChromePids([]);
-  // Final GC hint after all accounts are done
-  if (typeof global.gc === 'function') {
-    try { global.gc(); } catch {}
+  } catch (err) {
+    console.error(`[scrapeAllAccounts] cycle error: ${err.message}`);
+  } finally {
+    done = true;
+    clearTimeout(overallTimer);
+    lastAutoScrapeAt = lastAutoScrapeAt ||
+    new Date().toISOString();
+    lastAutoScrapeResult = results;
+    sseSend('scrape-complete', { at: lastAutoScrapeAt, count: results.length, results });
+    killNewHeadlessChromePids([]);
+    if (typeof global.gc === 'function') { try { global.gc(); } catch {} }
+    const mem = process.memoryUsage();
+    console.log(`[memory] rss=${Math.round(mem.rss / 1024 / 1024)}MB heap=${Math.round(mem.heapUsed / 1024 / 1024)}/${Math.round(mem.heapTotal / 1024 / 1024)}MB ext=${Math.round(mem.external / 1024 / 1024)}MB`);
   }
-  // Log current memory usage for diagnostics
-  const mem = process.memoryUsage();
-  console.log(`[memory] rss=${Math.round(mem.rss / 1024 / 1024)}MB heap=${Math.round(mem.heapUsed / 1024 / 1024)}/${Math.round(mem.heapTotal / 1024 / 1024)}MB ext=${Math.round(mem.external / 1024 / 1024)}MB`);
   return results;
 }
 
@@ -1145,12 +1157,17 @@ function createServer(port) {
     }
   });
 
+  let refreshInProgress = false;
   app.post('/api/refresh', async (req, res) => {
+    if (refreshInProgress) return res.json({ ok: false, error: 'Refresh already in progress' });
+    refreshInProgress = true;
     try {
       const results = await scrapeAllAccounts();
       res.json({ ok: true, count: results.length, results });
     } catch (err) {
       res.status(500).json({ error: err.message });
+    } finally {
+      refreshInProgress = false;
     }
   });
 

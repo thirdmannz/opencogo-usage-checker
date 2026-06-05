@@ -570,21 +570,21 @@
     if (pollTimer) clearInterval(pollTimer);
     countdown = 60;
     countdownValue.textContent = `${countdown}s`;
-    // Full refresh cycle (accounts + status)
-    refreshTimer = setInterval(async () => {
-      await refreshAll();
-      countdown = 60;
-    }, 60000);
-    // Countdown display
+    // Auto data poll every 10s — shows latest saved data without triggering a scrape
+    refreshTimer = setInterval(() => {
+      loadAccounts();
+      loadStatus();
+      countdown = Math.max(0, countdown - 10);
+      countdownValue.textContent = `${countdown}s`;
+    }, 10000);
+    // Countdown display (every second)
     countdownTimer = setInterval(() => {
       countdown = Math.max(0, countdown - 1);
       countdownValue.textContent = `${countdown}s`;
     }, 1000);
-    // Backup data poll every 15s — refreshes rows if data has changed
+    // Backup data poll — smarter, checks if data is stale instead of always refreshing
     pollTimer = setInterval(async () => {
-      // Always refresh status bar
       await loadStatus();
-      // Auto-refresh accounts if data is stale (>90s since last scrape) or SSE disconnected
       const dotClass = sseDot.className;
       const sseDead = dotClass.includes('off') || dotClass.includes('connecting');
       if (sseDead || isStale(lastScrapeAt, 90)) {
@@ -645,7 +645,10 @@
     btnLoad(true);
     stEl.textContent = 'Refreshing all accounts…';
     try {
-      const r = await fetch('/api/refresh?ts='+Date.now(),{method:'POST'});
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 120000);
+      const r = await fetch('/api/refresh?ts='+Date.now(),{method:'POST', signal: ctrl.signal});
+      clearTimeout(t);
       const p = await r.json();
       if (p.results) { renderStats(p.results); renderRows(p.results); }
       stEl.textContent = p.results ? `Done. ${p.count} accounts.` : `Error: ${p.error||'Unknown'}`;
