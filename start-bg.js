@@ -1,14 +1,15 @@
 /**
- * OpenCode Go — background server launcher with auto-restart.
+ * OpenCode Go — background server launcher with auto-restart + health checks.
  *
- * Starts the Express server and restarts it if it crashes.
- * Run this instead of `node app.js server` for production use.
+ * Spawns the Express server, monitors it via HTTP health checks,
+ * and restarts on crash or hang. Use instead of `node app.js server`.
  *
  * Usage:
  *   node start-bg.js              (default port 3333)
  *   node start-bg.js --port 4444
  */
 const { spawn } = require('child_process');
+const http = require('http');
 const path = require('path');
 
 const args = process.argv.slice(2);
@@ -18,7 +19,35 @@ const PORT = portIdx !== -1 ? args[portIdx + 1] : '3333';
 const NODE_OPTS = [
   '--expose-gc',
   '--max-old-space-size=1024',
+  '--unhandled-rejections=warn',   // log but DON'T terminate on unhandled rejections
 ];
+
+let restartCount = 0;
+let healthTimer = null;
+
+function healthCheck(child) {
+  if (healthTimer) clearInterval(healthTimer);
+
+  healthTimer = setInterval(() => {
+    if (!child || child.killed || child.exitCode !== null) {
+      clearInterval(healthTimer);
+      healthTimer = null;
+      return;
+    }
+
+    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, { timeout: 5000 }, (res) => {
+      res.resume(); // drain response
+      restartCount = 0; // healthy — reset backoff
+    });
+    req.on('error', () => {
+      // Server not responding — force-kill so watchdog restarts it
+      console.log(`[bg] health check failed — server unresponsive, killing PID ${child.pid}`);
+      try { process.kill(child.pid, 'SIGKILL'); } catch {}
+      try { require('child_process').spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' }); } catch {}
+    });
+    req.end();
+  }, 15000); // check every 15s
+}
 
 function start() {
   const child = spawn('node', [...NODE_OPTS, 'app.js', 'server', '--port', PORT], {
@@ -28,30 +57,39 @@ function start() {
   });
 
   const startedAt = Date.now();
+  console.log(`[bg] started PID ${child.pid} on port ${PORT}`);
+
+  // Start health checks after a brief grace period
+  setTimeout(() => healthCheck(child), 8000);
 
   child.on('exit', (code, signal) => {
+    if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(0);
     console.log(`[bg] server exited after ${elapsed}s (code=${code} signal=${signal})`);
 
-    // Restart unless it exited immediately (<5s) — that likely means a startup error
+    restartCount++;
+
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
+    const backoff = Math.min(1000 * Math.pow(2, restartCount - 1), 30000);
+
     if (elapsed < 5 && code !== 0) {
-      console.error(`[bg] server exited too quickly (${elapsed}s), waiting 10s before retry…`);
-      setTimeout(start, 10000);
+      console.log(`[bg] quick exit (${elapsed}s), waiting ${backoff}ms before retry (attempt #${restartCount})…`);
+      setTimeout(start, backoff);
     } else {
-      console.log(`[bg] restarting…`);
+      console.log(`[bg] restarting… (attempt #${restartCount})`);
       setImmediate(start);
     }
   });
 
   child.on('error', (err) => {
     console.error(`[bg] spawn error: ${err.message}`);
-    console.log('[bg] restarting in 5s…');
     setTimeout(start, 5000);
   });
 }
 
 start();
 
-// Keep the event loop alive (start-bg itself never exits)
+// Keep event loop alive
 setInterval(() => {}, 30000);
-console.log(`[bg] OpenCode Go background launcher (port ${PORT}) — auto-restart enabled`);
+console.log(`[bg] OpenCode Go launcher (port ${PORT}) — auto-restart + health checks enabled`);

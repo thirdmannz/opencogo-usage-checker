@@ -159,6 +159,21 @@
       gap: 6px;
     }
     .summaryCost .big { margin: 0; }
+    .sse-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .sse-badge .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+    .sse-badge.connected { color: var(--good); border-color: rgba(53,199,89,0.3); }
+    .sse-badge.disconnected { color: var(--bad); border-color: rgba(255,107,107,0.3); }
     @media (max-width: 760px) {
       .usageGrid { grid-template-columns: 1fr; }
     }
@@ -169,7 +184,7 @@
   <div class="top">
     <div>
       <h1>OpenCode Go Usage Dashboard</h1>
-      <div class="sub">Reads local login sessions and shows current usage. Auto-refresh runs every 60 seconds. Port 3333.</div>
+      <div class="sub" id="subtitle">Auto-refresh runs every 60 seconds. Data updated in real-time.</div>
     </div>
     <div>
       <div class="btns">
@@ -182,7 +197,7 @@
   </div>
 
   <div class="grid" id="summary"></div>
-  <div class="status" id="autoStatus">Auto refresh: on, every 60 seconds.</div>
+  <div class="status" id="autoStatus">Auto refresh: on, every 60 seconds. <span class="sse-badge disconnected" id="sseBadge"><span class="dot"></span>Live updates: disconnected</span></div>
 
   <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 0;">
     <div class="card"><h3>Next check</h3><div class="big" id="countdown">60s</div><div class="muted">Front end polls once per minute</div></div>
@@ -210,6 +225,7 @@
   <script>
     const statusEl = document.getElementById('status');
     const autoStatusEl = document.getElementById('autoStatus');
+    const subtitleEl = document.getElementById('subtitle');
     const countdownEl = document.getElementById('countdown');
     const serverStateEl = document.getElementById('serverState');
     const rowsEl = document.getElementById('rows');
@@ -220,18 +236,20 @@
     const addStateEl = document.getElementById('addState');
     const addStateSubEl = document.getElementById('addStateSub');
     const loginHintEl = document.getElementById('loginHint');
+    const sseBadge = document.getElementById('sseBadge');
 
     let addStatusTimer = null;
     let addPendingName = null;
     let addPendingProvider = null;
     let lastServerScrapeAt = null;
-    let lastServerSeen = false;           // to detect reconnect after crash
+    let lastServerSeen = false;
 
     const intervalMs = 60000;
     let countdown = intervalMs / 1000;
     let refreshTimer = null;
     let countdownTimer = null;
     let serverPollTimer = null;
+    let sseReconnectTimer = null;
 
     function fmt(v) { return (v === undefined || v === null || v === '') ? '—' : v; }
     function safeText(v) { return (v === undefined || v === null || v === '') ? '—' : String(v); }
@@ -247,11 +265,6 @@
       if (!Number.isFinite(value)) return `$0.${'0'.repeat(digits)}`;
       return `$${value.toFixed(digits)}`;
     }
-    function statusClass(meta) {
-      if (meta.error) return 'status-bad';
-      if (!meta.scrapedAt) return 'status-warn';
-      return 'status-good';
-    }
 
     function renderSummary(accounts) {
       const total = accounts.length;
@@ -264,6 +277,17 @@
         return acc;
       }, {});
       const topProvider = Object.entries(providers).sort((a, b) => b[1] - a[1])[0] || ['github', 0];
+      // Find latest scrape time
+      const scrapedAts = accounts.map(a => a.scrapedAt).filter(Boolean).sort().reverse();
+      const latestScrape = scrapedAts[0] || null;
+      let lastScrapeStr = '';
+      if (latestScrape) {
+        const diff = Math.floor((Date.now() - new Date(latestScrape).getTime()) / 1000);
+        if (diff < 60) lastScrapeStr = `${diff}s ago`;
+        else if (diff < 3600) lastScrapeStr = `${Math.floor(diff / 60)}m ago`;
+        else if (diff < 86400) lastScrapeStr = `${Math.floor(diff / 3600)}h ago`;
+        else lastScrapeStr = `${Math.floor(diff / 86400)}d ago`;
+      }
       summaryEl.innerHTML = `
         <div class="card">
           <h3>Accounts</h3>
@@ -275,6 +299,7 @@
             <div class="summaryFoot">
               <span class="summaryPill"><strong>${providers.github || 0}</strong> GitHub</span>
               <span class="summaryPill"><strong>${providers.google || 0}</strong> Google</span>
+              ${latestScrape ? `<span class="summaryPill">Last update <strong>${lastScrapeStr}</strong></span>` : ''}
             </div>
           </div>
         </div>
@@ -376,21 +401,73 @@
       });
     }
 
+    // ── SSE connection ──────────────────────────────────────────────
+    function connectSSE() {
+      if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+
+      sseBadge.className = 'sse-badge disconnected';
+      sseBadge.innerHTML = '<span class="dot"></span>Live updates: connecting…';
+
+      const es = new EventSource('/api/events');
+
+      es.addEventListener('open', () => {
+        console.log('[sse] connected');
+        sseBadge.className = 'sse-badge connected';
+        sseBadge.innerHTML = '<span class="dot"></span>Live updates: connected';
+      });
+
+      es.addEventListener('server-state', (e) => {
+        try {
+          const state = JSON.parse(e.data);
+          serverStateEl.textContent = state.autoScrapeRunning ? 'Running' : 'Idle';
+        } catch {}
+      });
+
+      es.addEventListener('scrape-complete', (e) => {
+        console.log('[sse] scrape-complete received');
+        autoStatusEl.textContent = 'Auto refresh: completed — updating data…';
+        loadAccounts(); // reload immediately on push
+      });
+
+      es.addEventListener('add-complete', (e) => {
+        console.log('[sse] add-complete received');
+        loadAccounts();
+      });
+
+      es.onerror = () => {
+        console.log('[sse] connection lost');
+        sseBadge.className = 'sse-badge disconnected';
+        sseBadge.innerHTML = '<span class="dot"></span>Live updates: disconnected (reconnecting…)';
+        es.close();
+        // Aggressive reconnect: 1s, then 3s, then 10s
+        sseReconnectTimer = setTimeout(connectSSE, 1000);
+        // Also immediately fetch data since SSE is down
+        loadStatus();
+      };
+    }
+
+    // ── Polling / Status ───────────────────────────────────────────
     async function loadStatus() {
       try {
         const res = await fetch('/api/status?ts=' + Date.now());
         const status = await res.json();
 
-        // Detect server restart: was offline but now online
         if (!lastServerSeen) {
           lastServerSeen = true;
-          console.log('[frontend] server online — reloading data');
+          console.log('[frontend] server online — reloading all data');
+          // Force full refresh + reconnect SSE if down
+          if (!sseBadge.className.includes('connected')) {
+            connectSSE();
+          }
           await loadAccounts();
+          // Reset countdown so next poll happens sooner
+          countdown = 10;
+          countdownEl.textContent = `${countdown}s`;
         }
 
         serverStateEl.textContent = status.autoScrapeRunning ? 'Running' : 'Idle';
         autoStatusEl.textContent = `Auto refresh: ${status.autoScrapeRunning ? 'running' : 'idle'}, every ${Math.round((status.intervalMs || intervalMs) / 1000)} seconds.`;
-        // Auto-refresh accounts when server finishes a new scrape
+
         if (status.lastAutoScrapeAt && status.lastAutoScrapeAt !== lastServerScrapeAt) {
           lastServerScrapeAt = status.lastAutoScrapeAt;
           loadAccounts();
@@ -456,7 +533,6 @@
       if (!name) return;
       addPendingName = name;
       addPendingProvider = provider;
-      // If a login was pending, show cancel hint
       if (addStateEl.textContent !== 'idle' && addStateEl.textContent !== '') {
         loginHintEl.textContent = `Previous login cancelled. Starting new: ${name} / ${provider}. Finish it in the new browser.`;
       } else {
@@ -555,10 +631,10 @@
         if (countdown <= 0) countdown = intervalMs / 1000;
         countdownEl.textContent = `${countdown}s`;
       }, 1000);
-      // Poll server status every 10s to detect new scrapes and server liveness
+      // Poll server status every 5s for fast crash recovery detection
       serverPollTimer = setInterval(() => {
         loadStatus();
-      }, 10000);
+      }, 5000);
     }
 
     refreshBtn.addEventListener('click', scrapeAll);
@@ -567,6 +643,7 @@
     refreshAll();
     loadAddStatus();
     startTimers();
+    connectSSE();
   </script>
 </body>
 </html>

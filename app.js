@@ -408,6 +408,24 @@ function profileDir(name) { return path.join(SESSION_DIR, name); }
 function sessionStateFile(name) { return path.join(profileDir(name), 'state.json'); }
 function dataFile(name) { return path.join(DATA_DIR, `${name}.json`); }
 
+// ── SSE (Server-Sent Events) ───────────────────────────────────
+const sseClients = new Set();
+
+function sseSend(event, data) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    try { client.write(msg); } catch { sseClients.delete(client); }
+  }
+}
+
+function sseHeartbeat() {
+  for (const client of sseClients) {
+    try { client.write(':hb\n\n'); } catch { sseClients.delete(client); }
+  }
+}
+setInterval(sseHeartbeat, 30000);
+
+// ── Auto-scrape state ──────────────────────────────────────────
 let autoScrapeRunning = false;
 let autoScrapeTimer = null;
 let lastAutoScrapeAt = null;
@@ -702,6 +720,7 @@ async function webAddAccount(name, provider = 'github', signal) {
     addAccountState.error = null;
     addAccountState.status = 'done';
     console.log(`[web-add] session saved for "${name}"`);
+    sseSend('add-complete', { name, status: 'done' });
 
     const scrapeResult = await scrapeAccount(name);
     return scrapeResult;
@@ -954,6 +973,8 @@ async function scrapeAllAccounts() {
   }
   lastAutoScrapeAt = new Date().toISOString();
   lastAutoScrapeResult = results;
+  // Push to all SSE clients
+  sseSend('scrape-complete', { at: lastAutoScrapeAt, count: results.length, results });
   // Clean orphaned Chrome PIDs that were spawned during scraping
   killNewHeadlessChromePids(beforePids);
   // Final GC hint after all accounts are done
@@ -1002,6 +1023,26 @@ function createServer(port) {
     next();
   });
   app.use(express.static(path.join(BASE_DIR, 'public')));
+
+  // SSE event stream — real-time push to the dashboard
+  app.get('/api/events', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(':connected\n\n');
+    sseClients.add(res);
+    // Send current state immediately
+    sseSend('server-state', {
+      autoScrapeRunning,
+      lastAutoScrapeAt,
+      accountCount: listAccounts().length,
+      intervalMs: AUTO_SCRAPE_MS,
+    });
+    req.on('close', () => { sseClients.delete(res); });
+  });
 
   // List accounts
   app.get('/api/accounts', (req, res) => {
