@@ -25,6 +25,17 @@ function waitMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function waitMsSignal(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
 function extractWorkspaceBase(url) {
   const match = String(url || '').match(/https:\/\/opencode\.ai\/workspace\/[^/?#]+/i);
   return match ? match[0] : null;
@@ -388,6 +399,7 @@ let lastAutoScrapeAt = null;
 let lastAutoScrapeResult = null;
 
 let addAccountState = { status: 'idle', name: null, error: null, startedAt: null };
+let addLoginAbort = new AbortController();
 let activeAddContext = null;
 
 function listAccounts() {
@@ -517,7 +529,7 @@ async function waitForAuthCallback(page, timeoutMs = 5 * 60 * 1000) {
 }
 
 // ── Browser helpers ─────────────────────────────────────────────
-async function runLoginFlow(name, provider = 'github', { returnStateOnly = false } = {}) {
+async function runLoginFlow(name, provider = 'github', { returnStateOnly = false, signal } = {}) {
   const cleanProvider = String(provider || 'github').toLowerCase();
   const pdir = profileDir(name);
   const tempProfileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-go-'));
@@ -538,7 +550,7 @@ async function runLoginFlow(name, provider = 'github', { returnStateOnly = false
   let saved = false;
   let workspaceUrl = null;
 
-  while (Date.now() < deadline && !saved) {
+  while (Date.now() < deadline && !saved && !signal?.aborted) {
     try {
       // Connect to Chrome via CDP (reuse connection)
       if (!cdpBrowser) {
@@ -546,20 +558,48 @@ async function runLoginFlow(name, provider = 'github', { returnStateOnly = false
       }
       if (!cdpBrowser) { await waitMs(1000); continue; }
 
-      // Check all contexts for auth cookie on opencode.ai
+      // Check all contexts for the user having completed login.
+      // DON'T force-navigate to /go on auth cookie alone — the `/auth`
+      // page sets the `auth` cookie during OAuth callback, but the user
+      // may still be on GitHub's login form. Interrupting them with a
+      // forced navigation causes "invalid auth token" when they go back.
+      // Instead: wait for the page to NATURALLY reach /go or /workspace/...
       for (const ctx of cdpBrowser.contexts()) {
+        // Find pages that have navigated PAST the auth flow
+        const landedPages = [];
+        for (const page of ctx.pages()) {
+          const url = page.url();
+          // Only consider opencode.ai pages
+          if (!url.includes('opencode.ai') && !url.includes('auth.opencode.ai')) continue;
+          // Skip pages still in the auth/authorize flow
+          if (url.includes('/auth') || url.includes('/authorize') || url.includes('/login') || url.includes('/signin')) continue;
+          // Skip GitHub/Google OAuth pages
+          if (url.includes('github.com/') || url.includes('accounts.google.com/')) continue;
+          landedPages.push({ page, url });
+        }
+        if (landedPages.length === 0) continue;
+
+        // User completed login — verify auth cookie
         const cookies = await ctx.cookies('https://opencode.ai').catch(() => []);
         const authCookie = cookies.find(c => c.name === 'auth' && c.domain.includes('opencode.ai'));
         if (!authCookie) continue;
 
+        console.log(`[add] Login complete — page: ${landedPages[0].url}`);
         console.log(`[add] Auth cookie detected (expires: ${new Date(authCookie.expires * 1000).toISOString()})`);
 
-        // Extract workspace URL from open pages
-        for (const page of ctx.pages()) {
-          const url = page.url();
-          const base = extractWorkspaceBase(url);
+        // Brief settle before workspace URL detection
+        await waitMsSignal(2000, signal);
+
+        // Try to find workspace URL from the landed pages
+        for (const { page } of landedPages) {
+          const base = extractWorkspaceBase(page.url());
           if (base) { workspaceUrl = base; break; }
+          // Check for workspace link (common on /go landing page)
+          const link = await page.locator('a[href*="/workspace/"]').first().getAttribute('href').catch(() => null);
+          if (link) workspaceUrl = extractWorkspaceBase(link);
         }
+
+        console.log(`[add] Session ready — saving (workspace: ${workspaceUrl || '—'})`);
 
         if (!returnStateOnly) {
           const stateFile = path.join(tempProfileDir, 'state.json');
@@ -587,6 +627,16 @@ async function runLoginFlow(name, provider = 'github', { returnStateOnly = false
   }
 
   if (cdpBrowser) await cdpBrowser.close().catch(() => {});
+
+  // Early exit on abort: kill browser, clean temp dir
+  if (!saved && signal?.aborted) {
+    console.log(`[add] Login aborted for "${name}"`);
+    if (browserRun?.child?.pid) {
+      try { process.kill(-browserRun.child.pid); } catch { try { process.kill(browserRun.child.pid); } catch {} }
+    }
+    safeRmDir(tempProfileDir, `${name}-temp`);
+    return { ok: false, error: 'Login aborted' };
+  }
 
   // Fallback: if the browser was closed quickly, inspect the temp profile once more.
   if (!saved) {
@@ -618,13 +668,15 @@ async function openLoginBrowser(name, provider = 'github') {
   return runLoginFlow(name, provider, { returnStateOnly: false });
 }
 
-async function webAddAccount(name, provider = 'github') {
+async function webAddAccount(name, provider = 'github', signal) {
   addAccountState = { status: 'opening', name, error: null, startedAt: new Date().toISOString() };
   console.log(`[web-add] opening browser for "${name}" (${String(provider || 'github').toLowerCase()})...`);
 
   try {
     addAccountState.status = 'logging_in';
-    const result = await runLoginFlow(name, provider, { returnStateOnly: false });
+    const result = await runLoginFlow(name, provider, { returnStateOnly: false, signal });
+    // If this login was superseded by a newer request, don't touch state
+    if (addAccountState.name !== name) return { name, error: 'superseded' };
     if (!result.ok) {
       addAccountState.status = 'error';
       addAccountState.error = result.error;
@@ -639,6 +691,7 @@ async function webAddAccount(name, provider = 'github') {
     const scrapeResult = await scrapeAccount(name);
     return scrapeResult;
   } catch (err) {
+    if (addAccountState.name !== name) return { name, error: 'superseded' };
     addAccountState.status = 'error';
     addAccountState.error = err.message;
     return { name, error: err.message };
@@ -971,17 +1024,24 @@ function createServer(port) {
     res.json(addAccountState);
   });
 
-  app.post('/api/add-account/:name', (req, res) => {
+  app.post('/api/add-account/:name', async (req, res) => {
     const { name } = req.params;
     if (!name || name.length < 1) {
       return res.status(400).json({ error: 'Account name required' });
     }
+    // If another login is in progress, abort it and restart
     if (addAccountState.status !== 'idle' && addAccountState.status !== 'done' && addAccountState.status !== 'error') {
-      return res.status(409).json({ error: 'Another login is in progress', state: addAccountState });
+      const prevName = addAccountState.name;
+      console.log(`[web-add] Aborting login for "${prevName}" — new request for "${name}"`);
+      addLoginAbort.abort();
+      // Wait a moment for cleanup, then reset
+      await waitMs(300);
+      addAccountState = { status: 'idle', name: null, error: null, startedAt: null };
     }
-    // Start in background — non-blocking
+    // Create fresh abort controller for this new login
+    addLoginAbort = new AbortController();
     addAccountState = { status: 'opening', name, error: null, startedAt: new Date().toISOString() };
-    webAddAccount(name, req.body?.provider || 'github').catch(err => {
+    webAddAccount(name, req.body?.provider || 'github', addLoginAbort.signal).catch(err => {
       console.error(`[web-add] unexpected error: ${err.message}`);
     });
     res.json({ ok: true, name, status: 'opening' });
