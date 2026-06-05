@@ -349,6 +349,9 @@
   let countdown = 60;
   let refreshTimer, countdownTimer, pollTimer, sseReconnectTimer, addStatusTimer;
 
+  // Track last loaded data for change detection
+  let lastAccountsJson = null;
+
   // ── Helpers ──────────────────────────────────
   function txt(v) { return v == null || v === '' ? '—' : String(v); }
   function ago(iso) {
@@ -363,6 +366,15 @@
     if (val >= 90) return 'bad';
     if (val >= 70) return 'warn';
     return 'good';
+  }
+  function agoAgo(iso) {
+    // returns "X ago" string for display
+    const a = ago(iso);
+    return a ? a + ' ago' : '';
+  }
+  function isStale(iso, maxAgeSec = 120) {
+    if (!iso) return true;
+    return (Date.now() - new Date(iso).getTime()) > maxAgeSec * 1000;
   }
 
   // ── Button states ────────────────────────────
@@ -551,15 +563,67 @@
     }, 3000);
   }
 
-  // ── API actions ─────────────────────────────
+  // ── Timers ──────────────────────────────────
+  function startTimers() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    if (countdownTimer) clearInterval(countdownTimer);
+    if (pollTimer) clearInterval(pollTimer);
+    countdown = 60;
+    countdownValue.textContent = `${countdown}s`;
+    // Full refresh cycle (accounts + status)
+    refreshTimer = setInterval(async () => {
+      await refreshAll();
+      countdown = 60;
+    }, 60000);
+    // Countdown display
+    countdownTimer = setInterval(() => {
+      countdown = Math.max(0, countdown - 1);
+      countdownValue.textContent = `${countdown}s`;
+    }, 1000);
+    // Backup data poll every 15s — refreshes rows if data has changed
+    pollTimer = setInterval(async () => {
+      // Always refresh status bar
+      await loadStatus();
+      // Auto-refresh accounts if data is stale (>90s since last scrape) or SSE disconnected
+      const dotClass = sseDot.className;
+      const sseDead = dotClass.includes('off') || dotClass.includes('connecting');
+      if (sseDead || isStale(lastScrapeAt, 90)) {
+        await smartRefresh();
+      }
+    }, 15000);
+  }
+
+  // Smart refresh — only re-render if data actually changed
+  async function smartRefresh() {
+    try {
+      const r = await fetch('/api/accounts?ts=' + Date.now());
+      const a = await r.json();
+      const json = JSON.stringify(a);
+      if (json !== lastAccountsJson) {
+        lastAccountsJson = json;
+        renderStats(a);
+        renderRows(a);
+        // Update the "N accounts loaded" footer
+        const hasErr = a.some(x => x.error);
+        stEl.innerHTML = hasErr
+          ? `${a.length} accounts · <span style="color:var(--red)">${a.filter(x=>x.error).length} errors</span>`
+          : `${a.length} accounts · all ok`;
+      }
+    } catch {} // silent — main poll handles errors
+  }
+
   async function loadAccounts() {
     stEl.textContent = 'Loading…';
     try {
-      const r = await fetch('/api/accounts?ts='+Date.now());
+      const r = await fetch('/api/accounts?ts=' + Date.now());
       const a = await r.json();
-      renderStats(a); renderRows(a);
-      stEl.textContent = `${a.length} account${a.length!==1?'s':''} loaded.`;
-    } catch (e) { stEl.innerHTML = `<span class="err">Failed: ${e.message}</span>`; }
+      lastAccountsJson = JSON.stringify(a);
+      renderStats(a);
+      renderRows(a);
+      stEl.innerHTML = a.length + ' account' + (a.length !== 1 ? 's' : '') + ' loaded.';
+    } catch (e) {
+      stEl.innerHTML = `<span class="err">Failed: ${e.message}</span>`;
+    }
   }
 
   async function delAccount(name) {
@@ -602,18 +666,6 @@
     if (!r.ok) { loginHint.textContent = p.error||'Failed'; return; }
     pollAddDone();
     loadAccounts();
-  }
-
-  // ── Timers ──────────────────────────────────
-  function startTimers() {
-    if (refreshTimer) clearInterval(refreshTimer);
-    if (countdownTimer) clearInterval(countdownTimer);
-    if (pollTimer) clearInterval(pollTimer);
-    countdown = 60;
-    countdownValue.textContent = `${countdown}s`;
-    refreshTimer = setInterval(() => { refreshAll(); countdown=60; }, 60000);
-    countdownTimer = setInterval(() => { countdown = Math.max(0,countdown-1); countdownValue.textContent = `${countdown}s`; }, 1000);
-    pollTimer = setInterval(loadStatus, 5000);
   }
 
   // ── Init ────────────────────────────────────

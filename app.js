@@ -750,7 +750,12 @@ async function closeActiveAccountBrowser(name) {
   const key = String(name);
   const context = activeScrapeContexts.get(key);
   if (context) {
-    try { await context.close(); } catch {}
+    try {
+      // Get browser FIRST before closing context
+      const browser = context.browser();
+      await context.close().catch(() => {});
+      if (browser && browser.isConnected()) await browser.close().catch(() => {});
+    } catch {}
   }
   activeScrapeContexts.delete(key);
 }
@@ -799,7 +804,7 @@ async function scrapeAccount(name, _isRetry = false) {
       activeScrapeContexts.set(key, context);
 
       const rootPage = await context.newPage();
-      await rootPage.goto('https://opencode.ai/go', { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+      await rootPage.goto('https://opencode.ai/go', { waitUntil: 'load', timeout: 20000 }).catch(() => {});
       // Page may have been redirected to login or closed after goto
       if (rootPage.isClosed()) {
         return { name, error: 'Page closed after navigation — session may be expired. Re-login: node app.js add ' + name, scrapedAt: new Date().toISOString() };
@@ -850,7 +855,7 @@ async function scrapeAccount(name, _isRetry = false) {
       let goLimits = [];
       let goUrlFinal = null;
       if (goUrl) {
-        const navOk = await safePageOp(() => page.goto(goUrl, { waitUntil: 'networkidle', timeout: 30000 }));
+        const navOk = await safePageOp(() => page.goto(goUrl, { waitUntil: 'load', timeout: 20000 }));
         if (navOk === null) {
           return { name, error: 'Browser closed while navigating to Go page — session may be expired. Re-login.', scrapedAt: new Date().toISOString() };
         }
@@ -863,7 +868,7 @@ async function scrapeAccount(name, _isRetry = false) {
       if (rootPage.isClosed()) {
         return { name, error: 'Page closed after Go page — browser may have crashed. Re-login.', scrapedAt: new Date().toISOString() };
       }
-      await page.goto(workspaceUrl, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+      await page.goto(workspaceUrl, { waitUntil: 'load', timeout: 20000 }).catch(() => {});
       if (page.isClosed()) {
         return { name, error: 'Page closed after navigating to usage page.', scrapedAt: new Date().toISOString() };
       }
@@ -964,12 +969,6 @@ async function scrapeAccount(name, _isRetry = false) {
       saveAccountData(name, output);
       return output;
     } catch (err) {
-      // "Target page/context/browser closed" = transient — retry once with fresh browser
-      if (!_isRetry && /Target (page|context|browser) has been closed/i.test(err.message)) {
-        console.log(`[scrape] ${name}: transient close error, retrying once…`);
-        activeScrapePromises.delete(key);
-        return scrapeAccount(name, true);
-      }
       const errResult = { name, error: err.message, scrapedAt: new Date().toISOString() };
       saveAccountData(name, errResult);
       return errResult;
@@ -991,12 +990,30 @@ async function scrapeAccount(name, _isRetry = false) {
 
 async function scrapeAllAccounts() {
   // Clean orphaned headless Chrome PIDs before launching new ones
-  const beforePids = listHeadlessChromePids();
+  killNewHeadlessChromePids([]); // Kill ALL before starting clean
   const names = listAccounts();
   const results = [];
+
+  const ACCOUNT_TIMEOUT_MS = 60_000; // 60s per account max
+
   for (const name of names) {
     try {
-      results.push(await scrapeAccount(name));
+      // Race the scrape against a per-account timeout
+      // Timeout handler does NOT try to close the browser (that can hang too)
+      // Instead, just returns timeout error and moves on
+      let timer;
+      const result = await Promise.race([
+        scrapeAccount(name).finally(() => clearTimeout(timer)),
+        new Promise(resolve => {
+          timer = setTimeout(() => {
+            console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
+            const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
+            saveAccountData(name, errResult);
+            resolve(errResult);
+          }, ACCOUNT_TIMEOUT_MS);
+        }),
+      ]);
+      results.push(result);
     } catch (err) {
       results.push({ name, error: err.message, scrapedAt: new Date().toISOString() });
     }
@@ -1011,8 +1028,8 @@ async function scrapeAllAccounts() {
   lastAutoScrapeResult = results;
   // Push to all SSE clients
   sseSend('scrape-complete', { at: lastAutoScrapeAt, count: results.length, results });
-  // Clean orphaned Chrome PIDs that were spawned during scraping
-  killNewHeadlessChromePids(beforePids);
+  // Clean ALL headless Chrome PIDs that may have leaked (also kills ones from this cycle — OK because accounts are saved to disk)
+  killNewHeadlessChromePids([]);
   // Final GC hint after all accounts are done
   if (typeof global.gc === 'function') {
     try { global.gc(); } catch {}
@@ -1027,7 +1044,15 @@ function startAutoScrape() {
   if (autoScrapeTimer) return;
 
   const tick = async () => {
-    if (autoScrapeRunning) return;
+    if (autoScrapeRunning) {
+      // Safety: if autoScrapeRunning for >5 min, force-reset
+      if (lastAutoScrapeAt === null || (Date.now() - new Date(lastAutoScrapeAt).getTime()) > 5 * 60 * 1000) {
+        console.error('[auto] SAFETY: previous scrape appears stuck, force-resetting');
+        autoScrapeRunning = false;
+      } else {
+        return;
+      }
+    }
     autoScrapeRunning = true;
     try {
       const count = listAccounts().length;
