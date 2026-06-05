@@ -3,581 +3,622 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenCode Go Usage Dashboard</title>
+  <title>OpenCode Go Usage</title>
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
     :root {
-      --bg: #0b0f14;
-      --panel: #121822;
-      --panel-2: #171f2b;
-      --line: rgba(255,255,255,0.07);
-      --text: #e7eef8;
-      --muted: #8fa3bc;
+      --bg-body: #0a0c10;
+      --bg-surface: #101316;
+      --bg-elevated: #171a1e;
+      --bg-hover: rgba(255,255,255,0.04);
+      --line: rgba(255,255,255,0.06);
+      --line-hover: rgba(255,255,255,0.10);
+      --text: #e8edf5;
+      --text-secondary: #8b95a8;
+      --text-tertiary: #586070;
       --accent: #5b8cff;
-      --accent-dim: rgba(91,140,255,0.12);
-      --good: #35c759;
-      --warn: #ffb020;
-      --bad: #ff6b6b;
-      --radius: 14px;
-      --radius-sm: 10px;
-      --radius-xs: 8px;
+      --accent-bg: rgba(91,140,255,0.10);
+      --green: #2ecc71;
+      --green-bg: rgba(46,204,113,0.10);
+      --yellow: #f1c40f;
+      --yellow-bg: rgba(241,196,15,0.10);
+      --red: #e74c3c;
+      --red-bg: rgba(231,76,60,0.10);
+      --radius-sm: 8px;
+      --radius: 12px;
+      --radius-lg: 16px;
     }
-    * { box-sizing: border-box; }
+
     body {
       margin: 0;
-      background: var(--bg);
+      background: var(--bg-body);
       color: var(--text);
-      font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
-    .wrap { max-width: 1160px; margin: 0 auto; padding: 28px 24px; }
 
-    /* ── Header ─────────────────────── */
-    .top {
+    /* ── Layout ───────────────────────────── */
+    .app-wrap { max-width: 1120px; margin: 0 auto; padding: 32px 24px 48px; }
+
+    /* ── Header ───────────────────────────── */
+    .app-hdr {
       display: flex; align-items: center; justify-content: space-between;
-      gap: 16px; margin-bottom: 20px;
+      margin-bottom: 28px; gap: 16px; flex-wrap: wrap;
     }
-    h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
-    .sub { color: var(--muted); font-size: 12.5px; margin-top: 3px; opacity: 0.7; }
-    .btns { display: flex; gap: 8px; flex-wrap: wrap; }
-    button {
-      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
-      padding: 8px 14px; border-radius: var(--radius-sm); cursor: pointer;
-      font-weight: 600; font-size: 13px; transition: all 0.18s ease;
+    .app-hdr-left { display: grid; gap: 2px; }
+    .app-hdr-left h1 {
+      margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #e8edf5 0%, #8b95a8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
-    button:hover { filter: brightness(1.12); border-color: rgba(255,255,255,0.14); }
-    button:active { transform: scale(0.97); }
-    button.primary {
-      background: var(--accent); border-color: transparent; color: white;
-      position: relative; overflow: hidden;
-    }
-    button.primary:hover { filter: brightness(1.1); }
-    button.primary:disabled { pointer-events: none; }
+    .app-hdr-sub { font-size: 12.5px; color: var(--text-tertiary); }
+    .app-hdr-right { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-    /* Refresh button loading state */
-    .refresh-loading {
-      color: transparent !important;
-      pointer-events: none !important;
+    .btn {
+      position: relative;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border-radius: var(--radius-sm);
+      border: 1px solid var(--line); background: var(--bg-elevated);
+      color: var(--text); font-size: 12.5px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s ease; white-space: nowrap;
+      overflow: hidden; user-select: none;
     }
-    .refresh-loading::after {
+    .btn:hover { border-color: var(--line-hover); background: rgba(255,255,255,0.06); }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary {
+      background: var(--accent); border-color: transparent; color: #fff;
+    }
+    .btn-primary:hover { filter: brightness(1.12); background: var(--accent); }
+    .btn-primary:disabled { pointer-events: none; opacity: 0.7; }
+
+    /* spinner */
+    .btn-spinner { color: transparent !important; pointer-events: none !important; }
+    .btn-spinner::after {
       content: '';
-      position: absolute;
-      width: 16px; height: 16px;
-      top: 50%; left: 50%;
-      margin: -8px 0 0 -8px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: white;
-      border-radius: 50%;
-      animation: spin 0.6s linear infinite;
+      position: absolute; width: 15px; height: 15px;
+      top: 50%; left: 50%; margin: -7.5px 0 0 -7.5px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff; border-radius: 50%;
+      animation: rot 0.55s linear infinite;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes rot { to { transform: rotate(360deg); } }
 
-    /* Pulse ring on button after completion */
-    @keyframes pulse-ring {
-      0% { box-shadow: 0 0 0 0 rgba(53,199,89,0.5); }
-      70% { box-shadow: 0 0 0 8px rgba(53,199,89,0); }
-      100% { box-shadow: 0 0 0 0 rgba(53,199,89,0); }
+    /* done flash */
+    .btn-done { background: var(--green) !important; border-color: transparent !important; color: #fff !important; }
+    .btn-done::after { display: none; }
+    @keyframes pulse-green {
+      0% { box-shadow: 0 0 0 0 rgba(46,204,113,0.5); }
+      70% { box-shadow: 0 0 0 10px rgba(46,204,113,0); }
+      100% { box-shadow: 0 0 0 0 rgba(46,204,113,0); }
     }
-    .refresh-done {
-      animation: pulse-ring 0.6s ease-out;
-      background: var(--good) !important;
-    }
+    .btn-done { animation: pulse-green 0.6s ease-out; }
 
-    /* ── Cards ──────────────────────── */
-    .grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px;
-      margin: 14px 0 18px;
+    .login-hint { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; text-align: right; }
+
+    /* ── Top row stats ────────────────────── */
+    .stats-row {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+      margin-bottom: 24px;
     }
-    .card {
-      background: rgba(18, 24, 34, 0.85);
+    .stat-card {
+      background: var(--bg-surface);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 14px 16px;
-      transition: border-color 0.2s ease;
+      padding: 14px 18px;
+      display: grid; gap: 2px;
     }
-    .card:hover { border-color: rgba(255,255,255,0.12); }
-    .card h3 {
-      margin: 0 0 8px; font-size: 12px; font-weight: 600;
-      color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
-    }
-    .big { font-size: 26px; font-weight: 800; margin: 4px 0 6px; letter-spacing: -0.03em; line-height: 1.1; }
+    .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
+    .stat-value { font-size: 28px; font-weight: 750; letter-spacing: -0.03em; line-height: 1.15; }
+    .stat-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 1px; }
 
-    /* ── Status cards row ────────────── */
-    .status-row {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 10px; margin-top: 2px;
+    /* ── Status bar ────────────────────────── */
+    .status-bar {
+      display: flex; align-items: center; gap: 12px;
+      font-size: 12px; color: var(--text-tertiary);
+      margin-bottom: 20px; padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
     }
-    .status-card { padding: 12px 14px; }
-    .status-card h3 { margin-bottom: 6px; font-size: 11px; }
-    .status-card .big { font-size: 20px; margin: 2px 0 4px; }
 
-    /* ── Table ──────────────────────── */
-    .tableWrap {
-      overflow: auto; border: 1px solid var(--line);
-      border-radius: var(--radius); background: rgba(18,24,34,0.85);
+    .sse-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--text-tertiary); flex: none;
     }
-    table { width: 100%; border-collapse: collapse; min-width: 720px; }
-    th, td {
-      padding: 11px 14px; border-bottom: 1px solid var(--line);
-      text-align: left; vertical-align: middle;
-    }
-    th {
-      position: sticky; top: 0; background: #12192a; z-index: 1;
-      color: var(--muted); font-size: 11px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.04em;
-    }
-    tr { transition: background 0.15s ease; }
-    tr:hover td { background: rgba(255,255,255,0.02); }
+    .sse-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(46,204,113,0.4); }
+    .sse-dot.off { background: var(--red); box-shadow: 0 0 6px rgba(231,76,60,0.3); }
+    .sse-dot.connecting { background: var(--yellow); animation: blink 0.8s ease infinite; }
+    @keyframes blink { 50% { opacity: 0.3; } }
 
-    /* Row flash on data update */
-    @keyframes row-flash {
-      0% { background: rgba(91,140,255,0.08); }
+    /* ── Accounts table ──────────────────── */
+    .acct-table {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: var(--bg-surface);
+    }
+    .acct-row {
+      display: grid;
+      grid-template-columns: 200px 120px 1fr 80px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      align-items: start; gap: 12px;
+      transition: background 0.15s ease;
+    }
+    .acct-row:last-child { border-bottom: none; }
+    .acct-row:hover { background: var(--bg-hover); }
+
+    .acct-row-header {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-tertiary);
+      background: rgba(255,255,255,0.02);
+      padding: 10px 18px;
+      border-bottom: 1px solid var(--line);
+      cursor: default;
+    }
+    .acct-row-header:hover { background: rgba(255,255,255,0.02) !important; }
+
+    /* row flash */
+    @keyframes row-in {
+      0% { background: var(--accent-bg); }
       100% { background: transparent; }
     }
-    .row-updated td { animation: row-flash 0.8s ease-out; }
+    .acct-row.flash { animation: row-in 0.8s ease-out; }
 
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .muted { color: var(--muted); }
-    .right { text-align: right; }
-    .small { font-size: 11.5px; }
-
-    .delBtn {
-      background: rgba(255,107,107,0.08); color: #ff9a9a;
-      border: 1px solid rgba(255,107,107,0.18);
-      padding: 4px 10px; border-radius: var(--radius-xs); cursor: pointer;
-      font-size: 11.5px; font-weight: 600; transition: all 0.15s ease;
+    .acct-name { font-weight: 650; font-size: 13px; line-height: 1.3; word-break: break-all; }
+    .acct-badge {
+      display: inline-block; margin-top: 4px;
+      font-size: 10.5px; font-weight: 600;
+      padding: 1px 7px; border-radius: 999px;
+      background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+      color: var(--text-secondary);
+      letter-spacing: 0.01em;
     }
-    .delBtn:hover { background: rgba(255,107,107,0.22); border-color: rgba(255,107,107,0.35); }
-    .delBtn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-    /* ── Status cell ───────────────── */
-    .statusCell { display: grid; gap: 3px; }
-    .statusLine { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
-    .statusDot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; flex: none; }
-    .status-good { color: var(--good); }
-    .status-warn { color: var(--warn); }
-    .status-bad { color: var(--bad); }
+    /* status column */
+    .acct-status { display: grid; gap: 2px; }
+    .acct-status-line { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+    .acct-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .acct-status-line.ok { color: var(--green); } .acct-dot.ok { background: var(--green); box-shadow: 0 0 5px rgba(46,204,113,0.3); }
+    .acct-status-line.pending { color: var(--yellow); } .acct-dot.pending { background: var(--yellow); }
+    .acct-status-line.err { color: var(--red); } .acct-dot.err { background: var(--red); }
+    .acct-status-sub { font-size: 11px; color: var(--text-tertiary); }
 
-    /* ── Usage cards ────────────────── */
-    .usageGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-    .usageCard {
+    /* usage column */
+    .acct-usage { display: grid; gap: 10px; }
+
+    .usage-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .usage-bar-item {
+      display: grid; gap: 4px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.02);
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
-      background: rgba(255,255,255,0.015);
-      min-height: 68px;
-      display: grid; place-items: center;
-      padding: 10px;
-      transition: border-color 0.2s ease;
+      min-height: 56px;
+      align-content: center;
     }
-    .usageCard:hover { border-color: rgba(255,255,255,0.14); }
-    .usageValue { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
-    .usageLabel { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
-    .usageReset { font-size: 10.5px; color: var(--muted); opacity: 0.7; }
+    .usage-bar-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
+    .usage-bar-track {
+      position: relative; height: 5px; border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      overflow: hidden;
+    }
+    .usage-bar-fill {
+      position: absolute; left: 0; top: 0; height: 100%;
+      border-radius: 999px; transition: width 0.5s ease;
+    }
+    .usage-bar-fill.good { background: var(--accent); }
+    .usage-bar-fill.warn { background: var(--yellow); }
+    .usage-bar-fill.bad { background: var(--red); }
 
-    /* ── Pills ──────────────────────── */
-    .providerBadge {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 8px; border-radius: 999px;
-      background: rgba(255,255,255,0.05); border: 1px solid var(--line);
-      color: var(--muted); font-size: 11px; font-weight: 600;
-    }
-    .summaryPills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .summaryPill {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 5px 9px; border-radius: 999px;
-      background: rgba(255,255,255,0.03); border: 1px solid var(--line);
-      color: var(--muted); font-size: 11.5px; font-weight: 500; white-space: nowrap;
-    }
-    .summaryPill strong { color: var(--text); font-weight: 600; }
+    .usage-bar-bottom { display: flex; justify-content: space-between; font-size: 11px; }
+    .usage-bar-pct { font-weight: 700; }
+    .usage-bar-reset { color: var(--text-tertiary); }
 
-    /* ── SSE badge ──────────────────── */
-    .sse-badge {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 8px; border-radius: 999px;
-      background: rgba(255,255,255,0.03); border: 1px solid var(--line);
-      color: var(--muted); font-size: 10.5px; font-weight: 600; vertical-align: middle;
+    .usage-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+    .usage-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 11px; color: var(--text-secondary);
+      padding: 2px 8px; border-radius: 999px;
+      background: rgba(255,255,255,0.02); border: 1px solid var(--line);
     }
-    .sse-badge .dot { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
-    .sse-badge.connected { color: var(--good); border-color: rgba(53,199,89,0.25); }
-    .sse-badge.disconnected { color: var(--bad); border-color: rgba(255,107,107,0.25); }
+    .usage-pill strong { color: var(--text); font-weight: 600; }
 
-    /* ── Footer status ──────────────── */
-    .status { margin-top: 10px; color: var(--muted); font-size: 12px; }
-    .err { color: var(--bad); }
-
-    /* ── Skeleton loading ───────────── */
-    .skeleton {
-      background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 75%);
-      background-size: 200% 100%;
-      animation: shimmer 1.5s ease-in-out infinite;
-      border-radius: 6px;
-      min-height: 14px;
+    /* delete */
+    .btn-del {
+      font-size: 11px; font-weight: 600; padding: 5px 0;
+      background: none; border: none; color: var(--text-tertiary);
+      cursor: pointer; transition: color 0.15s ease;
     }
-    @keyframes shimmer {
-      0% { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
-    }
+    .btn-del:hover { color: var(--red); }
 
-    @media (max-width: 760px) {
-      .usageGrid { grid-template-columns: 1fr; }
-      .top { flex-direction: column; align-items: flex-start; }
+    /* ── Footer ──────────────────────────── */
+    .ft-status { margin-top: 10px; font-size: 12px; color: var(--text-tertiary); }
+    .ft-status.err { color: var(--red); }
+
+    /* ── No-accounts empty state ──────────── */
+    .empty-state {
+      text-align: center; padding: 48px 24px; color: var(--text-tertiary);
+      border: 1px dashed var(--line); border-radius: var(--radius-lg);
+      background: var(--bg-surface);
+    }
+    .empty-state strong { color: var(--text-secondary); }
+
+    /* ── Responsive ───────────────────────── */
+    @media (max-width: 820px) {
+      .stats-row { grid-template-columns: 1fr 1fr; }
+      .acct-row { grid-template-columns: 1fr 1fr; }
+      .acct-row .acct-usage { grid-column: 1 / -1; }
+      .usage-bars { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 540px) {
+      .app-hdr { flex-direction: column; align-items: stretch; }
+      .app-hdr-right { justify-content: flex-end; }
+      .stats-row { grid-template-columns: 1fr; }
+      .acct-row { grid-template-columns: 1fr; }
+      .usage-bars { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-  <div class="top">
-    <div>
-      <h1>OpenCode Go Usage</h1>
-      <div class="sub">Scrape every 60s · push via SSE · dashboard auto-updates</div>
+<div class="app-wrap">
+
+  <!-- Header -->
+  <header class="app-hdr">
+    <div class="app-hdr-left">
+      <h1>OpenCode Usage</h1>
+      <div class="app-hdr-sub">Monitors account quotas across saved sessions</div>
     </div>
-    <div>
-      <div class="btns">
-        <button class="primary" id="refreshBtn">↻ Refresh all</button>
-        <button id="addGitHubBtn">+ GitHub</button>
-        <button id="addGoogleBtn">+ Google</button>
-      </div>
-      <div class="sub" id="loginHint">A new browser opens, login saves automatically.</div>
+    <div class="app-hdr-right">
+      <button class="btn btn-primary" id="refreshBtn">Refresh</button>
+      <button class="btn" id="addGitHubBtn">+ GitHub</button>
+      <button class="btn" id="addGoogleBtn">+ Google</button>
+      <div class="login-hint" id="loginHint">Login saves automatically in the browser.</div>
+    </div>
+  </header>
+
+  <!-- Top stats -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-card">
+      <div class="stat-label">Accounts</div>
+      <div class="stat-value" id="statAccounts">—</div>
+      <div class="stat-sub" id="statAccountsSub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Health</div>
+      <div class="stat-value" id="statHealth">—</div>
+      <div class="stat-sub" id="statHealthSub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Cost</div>
+      <div class="stat-value" id="statCost">—</div>
+      <div class="stat-sub" id="statCostSub"></div>
     </div>
   </div>
 
-  <div class="grid" id="summary"></div>
-  <div class="status" id="autoStatus">
-    Auto refresh: every 60s · <span class="sse-badge disconnected" id="sseBadge"><span class="dot"></span>Live: off</span>
+  <!-- Status bar -->
+  <div class="status-bar">
+    <span><span class="sse-dot off" id="sseDot"></span> <span id="sseLabel">Disconnected</span></span>
+    <span>·</span>
+    <span>Auto-scrape every 60s</span>
+    <span>·</span>
+    <span id="serverStatusLabel">Server: <span id="serverStatusValue">—</span></span>
+    <span>·</span>
+    <span id="countdownLabel">Next: <span id="countdownValue">—</span></span>
   </div>
 
-  <div class="status-row" id="infoCards">
-    <div class="card status-card"><h3>Next check</h3><div class="big" id="countdown">60s</div><div class="sub">Auto refresh timer</div></div>
-    <div class="card status-card"><h3>Server</h3><div class="big" id="serverState">—</div><div class="sub">From /api/status</div></div>
-    <div class="card status-card"><h3>Login</h3><div class="big" id="addState">—</div><div class="sub" id="addStateSub">Idle</div></div>
+  <!-- Accounts table -->
+  <div class="acct-table" id="acctTable">
+    <div class="acct-row acct-row-header">
+      <span>Account</span>
+      <span>Status</span>
+      <span>Usage</span>
+      <span></span>
+    </div>
+    <div id="acctRows"></div>
   </div>
 
-  <div class="tableWrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Account</th>
-          <th>Status</th>
-          <th>Usage</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
-  </div>
+  <div class="ft-status" id="ftStatus">Loading…</div>
+</div>
 
-  <div class="status" id="status">Loading…</div>
-  </div>
+<script>
+  const _ = id => document.getElementById(id);
+  const stEl = _('ftStatus');
+  const statAccounts = _('statAccounts');
+  const statAccountsSub = _('statAccountsSub');
+  const statHealth = _('statHealth');
+  const statHealthSub = _('statHealthSub');
+  const statCost = _('statCost');
+  const statCostSub = _('statCostSub');
+  const sseDot = _('sseDot');
+  const sseLabel = _('sseLabel');
+  const serverStatusValue = _('serverStatusValue');
+  const countdownValue = _('countdownValue');
+  const acctRows = _('acctRows');
+  const acctTable = _('acctTable');
+  const refreshBtn = _('refreshBtn');
+  const addGitHubBtn = _('addGitHubBtn');
+  const addGoogleBtn = _('addGoogleBtn');
+  const loginHint = _('loginHint');
 
-  <script>
-    const $ = id => document.getElementById(id);
-    const statusEl = $('status');
-    const autoStatusEl = $('autoStatus');
-    const countdownEl = $('countdown');
-    const serverStateEl = $('serverState');
-    const rowsEl = $('rows');
-    const summaryEl = $('summary');
-    const refreshBtn = $('refreshBtn');
-    const addGitHubBtn = $('addGitHubBtn');
-    const addGoogleBtn = $('addGoogleBtn');
-    const addStateEl = $('addState');
-    const addStateSubEl = $('addStateSub');
-    const loginHintEl = $('loginHint');
-    const sseBadge = $('sseBadge');
+  let lastScrapeAt = null;
+  let serverOnline = false;
+  let countdown = 60;
+  let refreshTimer, countdownTimer, pollTimer, sseReconnectTimer, addStatusTimer;
 
-    let addStatusTimer = null;
-    let lastServerScrapeAt = null;
-    let lastServerSeen = false;
+  // ── Helpers ──────────────────────────────────
+  function txt(v) { return v == null || v === '' ? '—' : String(v); }
+  function ago(iso) {
+    if (!iso) return '';
+    const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s/60)}m`;
+    if (s < 86400) return `${Math.floor(s/3600)}h`;
+    return `${Math.floor(s/86400)}d`;
+  }
+  function pctColor(val) {
+    if (val >= 90) return 'bad';
+    if (val >= 70) return 'warn';
+    return 'good';
+  }
 
-    const intervalMs = 60000;
-    let countdown = intervalMs / 1000;
-    let refreshTimer, countdownTimer, serverPollTimer, sseReconnectTimer;
+  // ── Button states ────────────────────────────
+  function btnLoad(on) {
+    if (on) { refreshBtn.classList.add('btn-spinner'); refreshBtn.disabled = true; }
+    else { refreshBtn.classList.remove('btn-spinner'); refreshBtn.disabled = false; }
+  }
+  function btnDone() {
+    refreshBtn.classList.remove('btn-spinner');
+    refreshBtn.classList.add('btn-done');
+    refreshBtn.textContent = '✓ Done';
+    setTimeout(() => {
+      refreshBtn.classList.remove('btn-done');
+      refreshBtn.textContent = 'Refresh';
+    }, 1300);
+  }
 
-    // ── Helpers ────────────────────────────────────────────────
-    function safeText(v) { return v == null || v === '' ? '—' : String(v); }
-    function providerLabel(p, name = '') {
-      if (/@(gmail|googlemail)\.com$/.test(String(name).toLowerCase())) return 'Google';
-      return String(p || '').toLowerCase() === 'google' ? 'Google' : 'GitHub';
+  // ── Stats ────────────────────────────────────
+  function renderStats(accounts) {
+    const n = accounts.length;
+    const ok = accounts.filter(a => !a.error).length;
+    const errs = n - ok;
+    const sumCost = accounts.reduce((s, a) => s + (parseFloat(a.totalCost)||0), 0);
+    const latest = accounts.map(a => a.scrapedAt).filter(Boolean).sort().reverse()[0];
+    const gs = accounts.filter(a => String(a.provider||'github').toLowerCase() === 'github').length;
+    const gl = n - gs;
+
+    statAccounts.textContent = n;
+    statAccountsSub.textContent = `${gs} GitHub · ${gl} Google` + (latest ? ` · updated ${ago(latest)} ago` : '');
+
+    if (errs) {
+      statHealth.textContent = `${ok}/${n}`;
+      statHealthSub.textContent = `${errs} error${errs>1?'s':''}`;
+      statHealth.style.color = 'var(--red)';
+    } else {
+      statHealth.textContent = `${ok}/${n}`;
+      statHealthSub.textContent = 'All good';
+      statHealth.style.color = 'var(--green)';
     }
-    function fmtMoney(amt, d = 4) {
-      const v = Number.parseFloat(amt);
-      if (!Number.isFinite(v)) return `$0.${'0'.repeat(d)}`;
-      return `$${v.toFixed(d)}`;
-    }
-    function ago(iso) {
-      if (!iso) return '';
-      const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-      if (s < 60) return `${s}s ago`;
-      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-      return `${Math.floor(s / 86400)}d ago`;
-    }
 
-    // ── Render ─────────────────────────────────────────────────
-    function renderSummary(accounts) {
-      const n = accounts.length;
-      const ok = accounts.filter(a => !a.error).length;
-      const errs = n - ok;
-      const sumCost = accounts.reduce((s, a) => s + (parseFloat(a.totalCost) || 0), 0);
-      const latest = accounts.map(a => a.scrapedAt).filter(Boolean).sort().reverse()[0];
-      const providers = {};
-      accounts.forEach(a => { const k = String(a.provider || 'github').toLowerCase(); providers[k] = (providers[k] || 0) + 1; });
+    statCost.textContent = `$${sumCost.toFixed(2)}`;
+    statCostSub.textContent = `${accounts.filter(a => a.totalCost).length} accounts with costs`;
+  }
 
-      summaryEl.innerHTML = `
-        <div class="card">
-          <h3>Accounts</h3>
-          <div class="big">${n}</div>
-          <div class="summaryPills">
-            <span class="summaryPill"><strong>${providers.github || 0}</strong> GitHub</span>
-            <span class="summaryPill"><strong>${providers.google || 0}</strong> Google</span>
-            ${latest ? `<span class="summaryPill">Updated <strong>${ago(latest)}</strong></span>` : ''}
+  // ── Usage bars ──────────────────────────────
+  function renderUsage(account) {
+    const limits = Array.isArray(account.goLimits) ? account.goLimits : [];
+    if (!limits.length) return '<span style="color:var(--text-tertiary);font-size:12px">No usage data</span>';
+
+    return `<div class="usage-bars">${limits.map(l => {
+      const pct = Number.parseFloat(String(l.percentValue ?? l.percentage ?? '0')) || 0;
+      const color = pctColor(pct);
+      return `
+        <div class="usage-bar-item">
+          <div class="usage-bar-label">${txt(l.label).replace(' Usage','')}</div>
+          <div class="usage-bar-track">
+            <div class="usage-bar-fill ${color}" style="width:${Math.min(pct,100)}%"></div>
           </div>
-        </div>
-        <div class="card">
-          <h3>Health</h3>
-          <div class="big" style="color:${errs ? 'var(--bad)' : 'var(--good)'}">${ok}/${n}</div>
-          <div class="summaryPills">
-            ${errs ? `<span class="summaryPill" style="color:var(--bad)"><strong>${errs}</strong> error</span>` : '<span class="summaryPill" style="color:var(--good)">All OK</span>'}
+          <div class="usage-bar-bottom">
+            <span class="usage-bar-pct">${txt(l.percentage)}</span>
+            <span class="usage-bar-reset">${txt(l.reset).replace(/^resets?\s+in\s+/i,'')}</span>
           </div>
-        </div>
-        <div class="card">
-          <h3>Total Cost</h3>
-          <div class="big">$${sumCost.toFixed(2)}</div>
-          <div class="summaryPills">
-            <span class="summaryPill">From <strong>${accounts.filter(a => a.totalCost).length}</strong> accounts</span>
+        </div>`;
+    }).join('')}</div>`;
+  }
+
+  // ── Status cell ─────────────────────────────
+  function statusHtml(a) {
+    if (a.error) return `<div class="acct-status"><div class="acct-status-line err"><span class="acct-dot err"></span>Error</div><div class="acct-status-sub">${txt(a.error)}</div></div>`;
+    if (!a.scrapedAt) return `<div class="acct-status"><div class="acct-status-line pending"><span class="acct-dot pending"></span>Pending</div><div class="acct-status-sub">waiting for sync</div></div>`;
+    return `<div class="acct-status"><div class="acct-status-line ok"><span class="acct-dot ok"></span>OK</div><div class="acct-status-sub">${ago(a.scrapedAt)} ago</div></div>`;
+  }
+
+  // ── Render rows ─────────────────────────────
+  function renderRows(accounts) {
+    const hasPrev = acctRows.children.length > 0;
+    acctRows.innerHTML = accounts.map(a => {
+      const p = String(a.provider||'github').toLowerCase() === 'google' ? 'Google' : 'GitHub';
+      const cost = a.totalCost != null ? `$${Number.parseFloat(a.totalCost).toFixed(4)}` : '—';
+      return `
+        <div class="acct-row" data-account="${txt(a.name)}">
+          <div>
+            <div class="acct-name">${txt(a.name)}</div>
+            <span class="acct-badge">${p}</span>
           </div>
-        </div>
-      `;
-    }
+          <div>${statusHtml(a)}</div>
+          <div class="acct-usage">
+            ${renderUsage(a)}
+            <div class="usage-meta">
+              <span class="usage-pill">Cost <strong>${cost}</strong></span>
+            </div>
+          </div>
+          <div><button class="btn-del" data-del="${txt(a.name)}">Delete</button></div>
+        </div>`;
+    }).join('');
 
-    function renderUsageLimits(a) {
-      const limits = Array.isArray(a.goLimits) ? a.goLimits : [];
-      if (!limits.length) return '<span class="muted small">No usage data</span>';
-      return `<div class="usageGrid">${limits.map(l => {
-        const pct = Number.parseFloat(String(l.percentValue ?? l.percentage ?? '0')) || 0;
-        const color = pct >= 90 ? 'var(--bad)' : pct >= 70 ? 'var(--warn)' : 'var(--accent)';
-        return `
-          <div class="usageCard">
-            <div class="usageLabel">${safeText(l.label).replace(' Usage', '')}</div>
-            <div class="usageValue" style="color:${color}">${safeText(l.percentage)}</div>
-            <div class="usageReset">${safeText(l.reset || '')}</div>
-          </div>`;
-      }).join('')}</div>`;
-    }
-
-    function statusMarkup(a) {
-      if (a.error)
-        return `<div class="statusCell"><div class="statusLine status-bad"><span class="statusDot"></span>Error</div><div class="small muted">${safeText(a.error)}</div></div>`;
-      if (!a.scrapedAt)
-        return `<div class="statusCell"><div class="statusLine status-warn"><span class="statusDot"></span>Pending</div><div class="small muted">Waiting for sync</div></div>`;
-      return `<div class="statusCell"><div class="statusLine status-good"><span class="statusDot"></span>OK</div><div class="small muted">${ago(a.scrapedAt)}</div></div>`;
-    }
-
-    function renderRows(accounts) {
-      const hadAccounts = rowsEl.children.length > 0;
-      rowsEl.innerHTML = accounts.map(a => {
-        const p = providerLabel(a.provider, a.name);
-        const cost = a.totalCost != null ? fmtMoney(a.totalCost, 4) : '—';
-        return `
-          <tr data-account="${safeText(a.name)}">
-            <td>
-              <div style="font-weight:600">${safeText(a.name)}</div>
-              <span class="providerBadge">${p}</span>
-            </td>
-            <td>${statusMarkup(a)}</td>
-            <td>
-              ${renderUsageLimits(a)}
-              <div class="summaryPills">
-                <span class="summaryPill">Total cost <strong>${cost}</strong></span>
-              </div>
-            </td>
-            <td><button class="delBtn" data-delete-name="${safeText(a.name)}">Delete</button></td>
-          </tr>`;
-      }).join('');
-
-      // Flash updated rows
-      if (hadAccounts) {
-        rowsEl.querySelectorAll('tr').forEach(tr => {
-          tr.classList.add('row-updated');
-          setTimeout(() => tr.classList.remove('row-updated'), 900);
-        });
-      }
-
-      rowsEl.querySelectorAll('[data-delete-name]').forEach(btn => {
-        btn.addEventListener('click', () => deleteAccount(btn.dataset.deleteName));
+    if (hasPrev) {
+      acctRows.querySelectorAll('.acct-row').forEach(el => {
+        el.classList.add('flash');
+        setTimeout(() => el.classList.remove('flash'), 900);
       });
     }
 
-    // ── Refresh button states ──────────────────────────────────
-    function setRefreshLoading(on) {
-      if (on) {
-        refreshBtn.classList.add('refresh-loading');
-        refreshBtn.disabled = true;
-      } else {
-        refreshBtn.classList.remove('refresh-loading');
-        refreshBtn.disabled = false;
-      }
-    }
-    function flashRefreshDone() {
-      refreshBtn.classList.add('refresh-done');
-      refreshBtn.innerHTML = '✓ Done';
-      setTimeout(() => {
-        refreshBtn.classList.remove('refresh-done');
-        refreshBtn.innerHTML = '↻ Refresh all';
-      }, 1200);
-    }
+    acctRows.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', () => delAccount(btn.dataset.del));
+    });
+  }
 
-    // ── SSE ────────────────────────────────────────────────────
-    function connectSSE() {
-      if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
-      sseBadge.className = 'sse-badge disconnected';
-      sseBadge.innerHTML = '<span class="dot"></span>Live: connecting';
+  // ── SSE ──────────────────────────────────────
+  function connectSSE() {
+    if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+    sseDot.className = 'sse-dot connecting';
+    sseLabel.textContent = 'Connecting';
 
-      const es = new EventSource('/api/events');
-      es.addEventListener('open', () => {
-        sseBadge.className = 'sse-badge connected';
-        sseBadge.innerHTML = '<span class="dot"></span>Live: on';
-      });
-      es.addEventListener('server-state', (e) => {
-        try {
-          const st = JSON.parse(e.data);
-          serverStateEl.textContent = st.autoScrapeRunning ? 'Running' : 'Idle';
-        } catch {}
-      });
-      es.addEventListener('scrape-complete', () => {
-        loadAccounts();
-        flashRefreshDone();
-      });
-      es.addEventListener('add-complete', () => { loadAccounts(); });
-      es.onerror = () => {
-        sseBadge.className = 'sse-badge disconnected';
-        sseBadge.innerHTML = '<span class="dot"></span>Live: reconnecting';
-        es.close();
-        sseReconnectTimer = setTimeout(connectSSE, 1500);
-        loadStatus();
-      };
-    }
-
-    // ── Polling ────────────────────────────────────────────────
-    async function loadStatus() {
+    const es = new EventSource('/api/events');
+    es.addEventListener('open', () => {
+      sseDot.className = 'sse-dot on';
+      sseLabel.textContent = 'Live';
+    });
+    es.addEventListener('server-state', e => {
       try {
-        const r = await fetch('/api/status?ts=' + Date.now());
-        const s = await r.json();
-        if (!lastServerSeen) {
-          lastServerSeen = true;
-          if (!sseBadge.className.includes('connected')) connectSSE();
-          await loadAccounts();
-        }
-        serverStateEl.textContent = s.autoScrapeRunning ? 'Running' : 'Idle';
-        if (s.lastAutoScrapeAt && s.lastAutoScrapeAt !== lastServerScrapeAt) {
-          lastServerScrapeAt = s.lastAutoScrapeAt;
-          loadAccounts();
-        }
-      } catch {
-        lastServerSeen = false;
-        serverStateEl.textContent = 'Offline';
-      }
-    }
-
-    async function loadAddStatus() {
-      try {
-        const r = await fetch('/api/add-status?ts=' + Date.now());
-        const s = await r.json();
-        const map = { idle: 'Idle', opening: `Opening: ${s.name||'—'}`, logging_in: `Login: ${s.name||'—'}`, saving: `Saving: ${s.name||'—'}`, done: `Done: ${s.name||'—'}`, error: s.error || 'Failed' };
-        addStateEl.textContent = s.status || 'idle';
-        addStateSubEl.textContent = map[s.status] || s.name || '—';
-      } catch {
-        addStateEl.textContent = 'Offline';
-        addStateSubEl.textContent = '—';
-      }
-    }
-
-    async function pollAddStatusUntilDone() {
-      if (addStatusTimer) clearInterval(addStatusTimer);
-      await loadAddStatus();
-      addStatusTimer = setInterval(async () => {
-        await loadAddStatus();
-        try {
-          const r = await fetch('/api/add-status?ts=' + Date.now());
-          const s = await r.json();
-          if (['done','error','idle'].includes(s.status)) {
-            clearInterval(addStatusTimer); addStatusTimer = null;
-            loginHintEl.textContent = 'A new browser opens, login saves automatically.';
-            refreshAll();
-          }
-        } catch {}
-      }, 3000);
-    }
-
-    async function startAddAccount(provider) {
-      const name = prompt(`Enter ${provider} account name (e.g. ${provider}-1)`);
-      if (!name) return;
-      loginHintEl.textContent = `Login: ${name} (${provider}). Complete in the browser.`;
-      addStateEl.textContent = 'opening';
-      addStateSubEl.textContent = `Starting: ${name}`;
-      const r = await fetch(`/api/add-account/${encodeURIComponent(name)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider })
-      });
-      const p = await r.json();
-      if (!r.ok) { addStateSubEl.textContent = p.error || 'Failed'; return; }
-      await pollAddStatusUntilDone();
+        const s = JSON.parse(e.data);
+        serverStatusValue.textContent = s.autoScrapeRunning ? 'running' : 'idle';
+      } catch {}
+    });
+    es.addEventListener('scrape-complete', () => {
       loadAccounts();
-    }
+      btnDone();
+    });
+    es.addEventListener('add-complete', () => { loadAccounts(); });
+    es.onerror = () => {
+      sseDot.className = 'sse-dot connecting';
+      sseLabel.textContent = 'Reconnecting';
+      es.close();
+      sseReconnectTimer = setTimeout(connectSSE, 1500);
+      loadStatus();
+    };
+  }
 
-    async function loadAccounts() {
-      statusEl.textContent = 'Loading…';
-      try {
-        const r = await fetch('/api/accounts?ts=' + Date.now());
-        const a = await r.json();
-        renderSummary(a); renderRows(a);
-        statusEl.textContent = `${a.length} accounts loaded.`;
-      } catch (e) {
-        statusEl.innerHTML = `<span class="err">Load failed:</span> ${e.message}`;
+  // ── State polling ───────────────────────────
+  async function loadStatus() {
+    try {
+      const r = await fetch('/api/status?ts='+Date.now());
+      const s = await r.json();
+      if (!serverOnline) {
+        serverOnline = true;
+        if (!sseDot.className.includes('on')) connectSSE();
+        loadAccounts();
       }
+      serverStatusValue.textContent = s.autoScrapeRunning ? 'running' : 'idle';
+      if (s.lastAutoScrapeAt && s.lastAutoScrapeAt !== lastScrapeAt) {
+        lastScrapeAt = s.lastAutoScrapeAt;
+        loadAccounts();
+      }
+    } catch {
+      serverOnline = false;
+      serverStatusValue.textContent = 'offline';
     }
+  }
 
-    async function deleteAccount(name) {
-      if (!confirm(`Delete "${name}"? This removes all session data.`)) return;
-      statusEl.textContent = `Deleting ${name}…`;
-      const r = await fetch(`/api/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
-      const p = await r.json();
-      if (p.ok) { statusEl.textContent = `Deleted: ${name}`; loadAccounts(); }
-      else { statusEl.innerHTML = `<span class="err">${p.error || 'Failed'}</span>`; }
-    }
+  async function loadAddStatus() {
+    try {
+      const r = await fetch('/api/add-status?ts='+Date.now());
+      const s = await r.json();
+      if (s.status === 'done') { loginHint.textContent = 'Login complete.'; }
+      else if (s.status === 'opening') { loginHint.textContent = `Opening browser: ${s.name||'—'}`; }
+      else if (s.status === 'logging_in') { loginHint.textContent = `Waiting for login: ${s.name||'—'}`; }
+      else if (s.status === 'error') { loginHint.textContent = `Error: ${s.error||'Failed'}`; }
+      else { loginHint.textContent = 'Login saves automatically in the browser.'; }
+    } catch { loginHint.textContent = 'Offline'; }
+  }
 
-    async function refreshAll() {
-      setRefreshLoading(true);
-      try { await Promise.all([loadAccounts(), loadStatus()]); } finally { setRefreshLoading(false); }
-    }
-
-    async function scrapeAll() {
-      setRefreshLoading(true);
-      statusEl.textContent = 'Refreshing… opening browsers for each account.';
+  async function pollAddDone() {
+    if (addStatusTimer) clearInterval(addStatusTimer);
+    await loadAddStatus();
+    addStatusTimer = setInterval(async () => {
+      await loadAddStatus();
       try {
-        const r = await fetch('/api/refresh?ts=' + Date.now(), { method: 'POST' });
-        const p = await r.json();
-        if (p.results) { renderSummary(p.results); renderRows(p.results); }
-        statusEl.textContent = p.results ? `Done. ${p.count} accounts updated.` : `Error: ${p.error}`;
-        loadStatus();
-      } catch (e) { statusEl.innerHTML = `<span class="err">Failed:</span> ${e.message}`; }
-      finally { setRefreshLoading(false); flashRefreshDone(); }
-    }
+        const r = await fetch('/api/add-status?ts='+Date.now());
+        const s = await r.json();
+        if (['done','error','idle'].includes(s.status)) {
+          clearInterval(addStatusTimer); addStatusTimer = null;
+          refreshAll();
+        }
+      } catch {}
+    }, 3000);
+  }
 
-    function startTimers() {
-      if (refreshTimer) clearInterval(refreshTimer);
-      if (countdownTimer) clearInterval(countdownTimer);
-      if (serverPollTimer) clearInterval(serverPollTimer);
-      countdown = intervalMs / 1000;
-      countdownEl.textContent = `${countdown}s`;
-      refreshTimer = setInterval(() => { refreshAll(); countdown = intervalMs / 1000; }, intervalMs);
-      countdownTimer = setInterval(() => { countdown = Math.max(0, countdown - 1); countdownEl.textContent = `${countdown}s`; }, 1000);
-      serverPollTimer = setInterval(loadStatus, 5000);
-    }
+  // ── API actions ─────────────────────────────
+  async function loadAccounts() {
+    stEl.textContent = 'Loading…';
+    try {
+      const r = await fetch('/api/accounts?ts='+Date.now());
+      const a = await r.json();
+      renderStats(a); renderRows(a);
+      stEl.textContent = `${a.length} account${a.length!==1?'s':''} loaded.`;
+    } catch (e) { stEl.innerHTML = `<span class="err">Failed: ${e.message}</span>`; }
+  }
 
-    refreshBtn.addEventListener('click', scrapeAll);
-    addGitHubBtn.addEventListener('click', () => void startAddAccount('github'));
-    addGoogleBtn.addEventListener('click', () => void startAddAccount('google'));
-    refreshAll(); loadAddStatus(); startTimers(); connectSSE();
-  </script>
+  async function delAccount(name) {
+    if (!confirm(`Delete "${name}" and all its data?`)) return;
+    stEl.textContent = `Deleting ${name}…`;
+    const r = await fetch(`/api/accounts/${encodeURIComponent(name)}`,{method:'DELETE'});
+    const p = await r.json();
+    if (p.ok) { stEl.textContent = `Deleted ${name}.`; loadAccounts(); }
+    else { stEl.innerHTML = `<span class="err">${p.error||'Failed'}</span>`; }
+  }
+
+  async function refreshAll() {
+    btnLoad(true);
+    try { await Promise.all([loadAccounts(), loadStatus()]); }
+    finally { btnLoad(false); }
+  }
+
+  async function scrapeAll() {
+    btnLoad(true);
+    stEl.textContent = 'Refreshing all accounts…';
+    try {
+      const r = await fetch('/api/refresh?ts='+Date.now(),{method:'POST'});
+      const p = await r.json();
+      if (p.results) { renderStats(p.results); renderRows(p.results); }
+      stEl.textContent = p.results ? `Done. ${p.count} accounts.` : `Error: ${p.error||'Unknown'}`;
+      loadStatus();
+    } catch (e) { stEl.innerHTML = `<span class="err">${e.message}</span>`; }
+    finally { btnLoad(false); btnDone(); }
+  }
+
+  async function startAdd(provider) {
+    const name = prompt(`Enter ${provider} account name:`);
+    if (!name) return;
+    loginHint.textContent = `Starting ${provider} login: ${name}`;
+    const r = await fetch(`/api/add-account/${encodeURIComponent(name)}`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provider})
+    });
+    const p = await r.json();
+    if (!r.ok) { loginHint.textContent = p.error||'Failed'; return; }
+    pollAddDone();
+    loadAccounts();
+  }
+
+  // ── Timers ──────────────────────────────────
+  function startTimers() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    if (countdownTimer) clearInterval(countdownTimer);
+    if (pollTimer) clearInterval(pollTimer);
+    countdown = 60;
+    countdownValue.textContent = `${countdown}s`;
+    refreshTimer = setInterval(() => { refreshAll(); countdown=60; }, 60000);
+    countdownTimer = setInterval(() => { countdown = Math.max(0,countdown-1); countdownValue.textContent = `${countdown}s`; }, 1000);
+    pollTimer = setInterval(loadStatus, 5000);
+  }
+
+  // ── Init ────────────────────────────────────
+  refreshBtn.addEventListener('click', scrapeAll);
+  addGitHubBtn.addEventListener('click', () => startAdd('github'));
+  addGoogleBtn.addEventListener('click', () => startAdd('google'));
+  refreshAll(); loadAddStatus(); startTimers(); connectSSE();
+</script>
 </body>
 </html>
