@@ -795,7 +795,7 @@ async function scrapeAccount(name, _isRetry = false) {
       const storageStateFile = sessionStateFile(name);
       browser = await chromium.launch({
         headless: true,
-        args: ['--disable-blink-features=AutomationControlled'],
+        args: ['--disable-blink-features=AutomationControlled', '--disable-gpu'],
       });
       context = await browser.newContext({
         storageState: storageStateFile,

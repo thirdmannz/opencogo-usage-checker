@@ -25,6 +25,9 @@ const NODE_OPTS = [
 let restartCount = 0;
 let healthTimer = null;
 
+let healthFailCount = 0;
+const MAX_HEALTH_FAILS = 2; // allow up to 2 consecutive failures (~40s) before killing
+
 function healthCheck(child) {
   if (healthTimer) clearInterval(healthTimer);
 
@@ -35,18 +38,24 @@ function healthCheck(child) {
       return;
     }
 
-    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, { timeout: 5000 }, (res) => {
+    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, { timeout: 10000 }, (res) => {
       res.resume(); // drain response
-      restartCount = 0; // healthy — reset backoff
+      healthFailCount = 0; // healthy — reset counter
     });
     req.on('error', () => {
-      // Server not responding — force-kill so watchdog restarts it
-      console.log(`[bg] health check failed — server unresponsive, killing PID ${child.pid}`);
-      try { process.kill(child.pid, 'SIGKILL'); } catch {}
-      try { require('child_process').spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' }); } catch {}
+      healthFailCount++;
+      if (healthFailCount >= MAX_HEALTH_FAILS) {
+        // Server unresponsive for multiple checks — force-kill so watchdog restarts it
+        console.log(`[bg] health failed ${healthFailCount}x — server unresponsive, killing PID ${child.pid}`);
+        try { process.kill(child.pid, 'SIGKILL'); } catch {}
+        try { require('child_process').spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' }); } catch {}
+        healthFailCount = 0;
+      } else {
+        console.log(`[bg] health check failed (${healthFailCount}/${MAX_HEALTH_FAILS}) — waiting`);
+      }
     });
     req.end();
-  }, 15000); // check every 15s
+  }, 20000); // check every 20s
 }
 
 function start() {
