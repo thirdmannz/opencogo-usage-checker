@@ -9,7 +9,8 @@ Local dashboard that reads your saved OpenCode Go sessions and shows current usa
 - **Auto-detect login sessions** — opens Chrome with CDP, detects auth cookie automatically, no manual file copying
 - **Per-account isolation** — each account runs its own headless Chrome scrape; concurrent scrapes don't interfere
 - **Auto-refresh** — dashboard polls every 60 seconds, API calls use cache-busting
-- **Crash-resilient** — server auto-restarts on crash via watchdog process, frontend reconnects automatically
+- **Crash-resilient** — server auto-restarts on crash via watchdog process with health checks, frontend reconnects automatically
+- **Abort-capable** — stuck scrape cycles are auto-aborted and Chrome cleaned up; prevents process accumulation
 - **Memory-managed** — GC hints between scrape cycles, sequential account delays, heap size capped at 1GB
 - **LAN accessible** — server binds to `0.0.0.0:3333`, firewall rule auto-added
 - **HTTPS** — self-signed cert included, works on localhost and LAN
@@ -44,14 +45,19 @@ Runs the Express server as a child process. If the server crashes:
 - Prints exit code and runtime duration
 - Restarts immediately (or after 10s delay if exit was <5s, indicating a startup error)
 - Runs with `--expose-gc` and `--max-old-space-size=1024` to reduce OOM risk
+- Health checks run every 30s with 90s timeout; 5 consecutive failures trigger a kill + restart
+- Tolerates slow scrape responses without false-positive restarts
 
 ### Memory Management
 
-Each auto-scrape cycle (4 accounts):
-1. Each account scrape launches a headless Chromium (~200MB), scrapes, then closes
-2. A 2-second delay between accounts lets Node settle
-3. `global.gc()` is called after each account and at the end of the cycle
-4. Memory usage (RSS, heap, external) is logged per cycle for diagnostics
+Each auto-scrape cycle (4 accounts, ~60s interval):
+1. Per-account timeout: 120s (accounts with 50+ usage rows need extra time)
+2. Overall cycle timeout: 10 min (prevents infinite hang)
+3. Safety reset: if cycle runs >12 min, AbortController cancels remaining accounts and cleans up Chrome
+4. Pre-cleanup: orphaned Chrome processes are killed before each account
+5. A 2-second delay between accounts lets Node settle
+6. `global.gc()` is called after each account and at the end of the cycle
+7. Memory usage (RSS, heap, external) is logged per cycle for diagnostics
 
 ### Frontend Reconnection
 
@@ -141,5 +147,6 @@ node app.js server --port 3333
 ### 排障
 
 - server 被砍掉後 `start-bg.js` 會自動重啟，終端機會看到 `[bg] server exited after Xs`
+- 抓取卡住時 safety reset 會自動 abort 並清理 Chrome，不會累積殭屍進程
 - 前端顯示 "Offline" 表示 server 暫時不可用，重啟後會自動刷新
 - `app.js` 會在每個 scrape 週期後印 `[memory] rss=XXXMB heap=XXX/XXXMB` 方便診斷
