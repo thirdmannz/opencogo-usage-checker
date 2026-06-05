@@ -782,7 +782,40 @@ async function safeWait(page, ms) {
   return result !== null;
 }
 
-/** Wait for page to be alive and stable */
+/** Race a promise against an AbortSignal — throws if aborted */
+function abortable(promise, signal, label = 'operation') {
+  if (signal?.aborted) return Promise.reject(new Error(`Aborted: ${label}`));
+  if (!signal) return promise;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      const onAbort = () => {
+        signal.removeEventListener('abort', onAbort);
+        reject(new Error(`Aborted: ${label}`));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }),
+  ]);
+}
+
+/** Combine two AbortSignals — aborts when either fires */
+function combineSignals(signalA, signalB) {
+  if (!signalA) return signalB;
+  if (!signalB) return signalA;
+  if (signalA.aborted) return signalA;
+  if (signalB.aborted) return signalB;
+  const ctrl = new AbortController();
+  const abort = () => { ctrl.abort(); };
+  signalA.addEventListener('abort', abort, { once: true });
+  signalB.addEventListener('abort', abort, { once: true });
+  // Clean up listeners when the combined signal fires
+  ctrl.signal.addEventListener('abort', () => {
+    signalA.removeEventListener('abort', abort);
+    signalB.removeEventListener('abort', abort);
+  }, { once: true });
+  return ctrl.signal;
+}
+
 function isPageAlive(page) {
   if (!page || page.isClosed()) return false;
   if (!page.context()) return false;
@@ -792,18 +825,19 @@ function isPageAlive(page) {
 }
 
 /** Attempt scrapeAccount with one auto-retry on page-closed errors */
-async function scrapeAccountWithRetry(name) {
-  const first = await scrapeAccount(name, true);
+async function scrapeAccountWithRetry(name, signal) {
+  const first = await scrapeAccount(name, true, signal);
   if (first && /(Target page|context.*closed|browser.*closed|Session closed)/i.test(first.error || '')) {
+    if (signal?.aborted) return first;
     console.log(`[scrape] ${name}: page closed on first attempt, retrying once…`);
     await waitMs(2000);
-    const second = await scrapeAccount(name, true);
+    const second = await scrapeAccount(name, true, signal);
     return second;
   }
   return first;
 }
 
-async function scrapeAccount(name, _isRetry = false) {
+async function scrapeAccount(name, _isRetry = false, signal) {
   const pdir = profileDir(name);
   const key = String(name);
 
@@ -811,30 +845,33 @@ async function scrapeAccount(name, _isRetry = false) {
     return { name, error: 'No saved session. Run: node app.js add ' + name };
   }
 
+  if (signal?.aborted) return { name, error: 'Aborted before scrape started.', scrapedAt: new Date().toISOString() };
   if (!_isRetry && activeScrapePromises.has(key)) return activeScrapePromises.get(key);
 
   const scrapePromise = (async () => {
     let browser;
     let context;
     try {
+      if (signal?.aborted) throw new Error('Aborted');
       const storageStateFile = sessionStateFile(name);
-      browser = await chromium.launch({
+      browser = await abortable(chromium.launch({
         headless: true,
         args: ['--disable-blink-features=AutomationControlled', '--disable-gpu'],
-      });
-      context = await browser.newContext({
+      }), signal, 'launch browser');
+      context = await abortable(browser.newContext({
         storageState: storageStateFile,
         viewport: { width: 1280, height: 800 },
-      });
+      }), signal, 'create context');
       activeScrapeContexts.set(key, context);
 
-      const rootPage = await context.newPage();
-      await rootPage.goto('https://opencode.ai/go', { waitUntil: 'load', timeout: 30000 }).catch(() => {});
+      const rootPage = await abortable(context.newPage(), signal, 'new page');
+      rootPage.setDefaultTimeout(15000);
+      await abortable(rootPage.goto('https://opencode.ai/go', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {}), signal, 'navigate to /go');
       // Page may have been redirected to login or closed after navigation
       if (rootPage.isClosed()) {
         return { name, error: 'Page closed after navigation — session may be expired. Re-login: node app.js add ' + name, scrapedAt: new Date().toISOString() };
       }
-      const waited = await safeWait(rootPage, 1500);
+      const waited = await safeWait(rootPage, 800);
       if (!waited) {
         return { name, error: 'Page closed during settle after navigation.', scrapedAt: new Date().toISOString() };
       }
@@ -857,12 +894,13 @@ async function scrapeAccount(name, _isRetry = false) {
 
       let workspaceUrl = null;
       for (const candidate of candidateUrls) {
+        if (signal?.aborted) throw new Error('Aborted');
         const base = extractWorkspaceBase(candidate);
         if (base) { workspaceUrl = `${base}/usage`; break; }
       }
 
       if (!workspaceUrl && !rootPage.isClosed()) {
-        await rootPage.waitForLoadState('domcontentloaded').catch(() => {});
+        await abortable(rootPage.waitForLoadState('domcontentloaded').catch(() => {}), signal, 'wait domcontentloaded');
         const href = await rootPage.evaluate(() => {
           const a = Array.from(document.querySelectorAll('a[href*="/workspace/"]')).find(el => el.href && el.href.includes('/workspace/'));
           return a ? a.href : null;
@@ -879,16 +917,15 @@ async function scrapeAccount(name, _isRetry = false) {
       }
 
       const page = rootPage;
-      page.setDefaultTimeout(20000);
       const goUrl = workspaceGoUrl(workspaceUrl);
       let goLimits = [];
       let goUrlFinal = null;
       if (goUrl) {
-        const navOk = await safePageOp(() => page.goto(goUrl, { waitUntil: 'load', timeout: 20000 }));
+        const navOk = await abortable(safePageOp(() => page.goto(goUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })), signal, 'navigate to go page');
         if (navOk === null) {
           return { name, error: 'Browser closed while navigating to Go page — session may be expired. Re-login.', scrapedAt: new Date().toISOString() };
         }
-        const settled = await safeWait(page, 1500);
+        const settled = await safeWait(page, 800);
         if (!settled) {
           return { name, error: 'Page closed after Go page navigation.', scrapedAt: new Date().toISOString() };
         }
@@ -900,8 +937,8 @@ async function scrapeAccount(name, _isRetry = false) {
       if (rootPage.isClosed()) {
         return { name, error: 'Page closed after Go page — browser may have crashed. Re-login.', scrapedAt: new Date().toISOString() };
       }
-      await safePageOp(() => page.goto(workspaceUrl, { waitUntil: 'load', timeout: 20000 }));
-      const settled2 = await safeWait(page, 1500);
+      await abortable(safePageOp(() => page.goto(workspaceUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })), signal, 'navigate to usage');
+      const settled2 = await safeWait(page, 800);
       if (!settled2) {
         return { name, error: 'Page closed after navigating to usage page.', scrapedAt: new Date().toISOString() };
       }
@@ -1040,7 +1077,7 @@ async function scrapeAllAccounts(signal) {
   }, 10 * 60 * 1000);
 
   try {
-    const ACCOUNT_TIMEOUT_MS = 120_000; // 120s per account max (accounts with 50+ usage rows need extra time)
+    const ACCOUNT_TIMEOUT_MS = 180_000; // 180s per account (some accounts with large usage tables need more time)
 
     for (const name of names) {
       // Check abort signal — stop early if safety reset fired
@@ -1052,28 +1089,33 @@ async function scrapeAllAccounts(signal) {
       // Pre-cleanup: kill any orphaned Chrome from prior aborted timeouts
       killNewHeadlessChromePids([]);
       try {
-        // Race the scrape against a per-account timeout
-        // Timeout handler aggressively kills orphaned browser first,
-        // then saves the error so the cycle can continue without accumulating Chrome processes.
-        let timer;
-        const result = await Promise.race([
-          scrapeAccountWithRetry(name)
-            .finally(() => clearTimeout(timer))
-            .finally(() => { closeActiveAccountBrowser(name).catch(() => {}); }),
-          new Promise(resolve => {
-            timer = setTimeout(() => {
-            console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
-            // Kill orphaned browser FIRST — prevents Chrome process accumulation
+          // Per-account abort: when timeout fires, the signal aborts the running scrape
+          const accountAbortController = new AbortController();
+          const accountSignal = signal ? combineSignals(signal, accountAbortController.signal) : accountAbortController.signal;
+          const timer = setTimeout(() => {
+            console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s, aborting…`);
+            accountAbortController.abort();
+            // Kill orphaned browser — prevents Chrome process accumulation
             closeActiveAccountBrowser(name).catch(() => {});
             killNewHeadlessChromePids([]);
-            const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
-            saveAccountData(name, errResult);
-            // Only kill the timed-out account's browser here.
-            // Full headless Chrome purge runs at the end of scrapeAllAccounts.
-            resolve(errResult);
-            }, ACCOUNT_TIMEOUT_MS);
-          }),
-        ]);
+          }, ACCOUNT_TIMEOUT_MS);
+
+          let result;
+          try {
+            result = await scrapeAccountWithRetry(name, accountSignal);
+          } catch (err) {
+            // If aborted via timeout, suppress the raw Aborted error — we handle it below
+            if (!accountAbortController.signal.aborted) throw err;
+          } finally {
+            clearTimeout(timer);
+            closeActiveAccountBrowser(name).catch(() => {});
+          }
+
+          // If aborted, save a clean timeout error instead of the raw "Aborted: …" message
+          if (accountAbortController.signal.aborted) {
+            result = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
+            saveAccountData(name, result);
+          }
         results.push(result);
         console.log(`[scrapeAllAccounts] ${name} done, result=${result ? (result.error ? 'error' : 'ok') : 'none'}`);
       } catch (err) {
