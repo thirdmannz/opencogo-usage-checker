@@ -1007,6 +1007,7 @@ async function scrapeAllAccounts() {
     const ACCOUNT_TIMEOUT_MS = 30_000; // 30s per account max
 
     for (const name of names) {
+      console.log(`[scrapeAllAccounts] starting account: ${name}`);
       try {
         // Race the scrape against a per-account timeout
         // Timeout handler does NOT try to close the browser (that can hang too)
@@ -1028,6 +1029,7 @@ async function scrapeAllAccounts() {
           }),
         ]);
         results.push(result);
+        console.log(`[scrapeAllAccounts] ${name} done, result=${result ? (result.error ? 'error' : 'ok') : 'none'}`);
       } catch (err) {
         results.push({ name, error: err.message, scrapedAt: new Date().toISOString() });
       }
