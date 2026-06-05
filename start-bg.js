@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * OpenCode Go — background server launcher with auto-restart + health checks.
  *
@@ -19,33 +20,42 @@ const PORT = portIdx !== -1 ? args[portIdx + 1] : '3333';
 const NODE_OPTS = [
   '--expose-gc',
   '--max-old-space-size=1024',
-  '--unhandled-rejections=warn',   // log but DON'T terminate on unhandled rejections
+  '--unhandled-rejections=warn',
 ];
 
 let restartCount = 0;
 let healthTimer = null;
+let isShuttingDown = false;
 
-let healthFailCount = 0;
-const MAX_HEALTH_FAILS = 2; // allow up to 2 consecutive failures (~40s) before killing
+// ── Health check ─────────────────────────────────────────────
+//
+// Key rules:
+//  - timeout is 60s because Playwright scraping blocks the event loop
+//  - check every 30s
+//  - allow 3 consecutive failures before killing
+//    (so a max 90s event-loop block is tolerated)
+//
+const HEALTH_INTERVAL_MS = 30000;
+const HEALTH_TIMEOUT_MS  = 60000;
+const MAX_HEALTH_FAILS   = 3;
 
 function healthCheck(child) {
   if (healthTimer) clearInterval(healthTimer);
 
   healthTimer = setInterval(() => {
-    if (!child || child.killed || child.exitCode !== null) {
+    if (!child || child.killed || child.exitCode !== null || isShuttingDown) {
       clearInterval(healthTimer);
       healthTimer = null;
       return;
     }
 
-    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, { timeout: 10000 }, (res) => {
-      res.resume(); // drain response
+    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, { timeout: HEALTH_TIMEOUT_MS }, (res) => {
+      res.resume();
       healthFailCount = 0; // healthy — reset counter
     });
     req.on('error', () => {
       healthFailCount++;
       if (healthFailCount >= MAX_HEALTH_FAILS) {
-        // Server unresponsive for multiple checks — force-kill so watchdog restarts it
         console.log(`[bg] health failed ${healthFailCount}x — server unresponsive, killing PID ${child.pid}`);
         try { process.kill(child.pid, 'SIGKILL'); } catch {}
         try { require('child_process').spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' }); } catch {}
@@ -55,9 +65,10 @@ function healthCheck(child) {
       }
     });
     req.end();
-  }, 20000); // check every 20s
+  }, HEALTH_INTERVAL_MS);
 }
 
+// ── Start server ────────────────────────────────────────────
 function start() {
   const child = spawn('node', [...NODE_OPTS, 'app.js', 'server', '--port', PORT], {
     cwd: __dirname,
@@ -66,12 +77,14 @@ function start() {
   });
 
   const startedAt = Date.now();
+  let healthFailCount = 0;
   console.log(`[bg] started PID ${child.pid} on port ${PORT}`);
 
-  // Start health checks after a brief grace period
-  setTimeout(() => healthCheck(child), 8000);
+  // Start health checks after a brief grace period for first scrape
+  setTimeout(() => healthCheck(child), 15000);
 
   child.on('exit', (code, signal) => {
+    if (isShuttingDown) return;
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
 
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(0);
@@ -79,7 +92,6 @@ function start() {
 
     restartCount++;
 
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
     const backoff = Math.min(1000 * Math.pow(2, restartCount - 1), 30000);
 
     if (elapsed < 5 && code !== 0) {
@@ -92,13 +104,25 @@ function start() {
   });
 
   child.on('error', (err) => {
+    if (isShuttingDown) return;
     console.error(`[bg] spawn error: ${err.message}`);
     setTimeout(start, 5000);
   });
 }
 
+// ── Clean shutdown ──────────────────────────────────────────
+process.on('SIGINT', () => {
+  isShuttingDown = true;
+  console.log('[bg] SIGINT — exiting');
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  isShuttingDown = true;
+  console.log('[bg] SIGTERM — exiting');
+  process.exit(0);
+});
+
 start();
 
-// Keep event loop alive
 setInterval(() => {}, 30000);
 console.log(`[bg] OpenCode Go launcher (port ${PORT}) — auto-restart + health checks enabled`);

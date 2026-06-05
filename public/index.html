@@ -347,7 +347,7 @@
   let lastScrapeAt = null;
   let serverOnline = false;
   let countdown = 60;
-  let refreshTimer, countdownTimer, pollTimer, sseReconnectTimer, addStatusTimer;
+  let refreshTimer, countdownTimer, pollTimer, passiveTimer, sseReconnectTimer, addStatusTimer;
 
   // Track last loaded data for change detection
   let lastAccountsJson = null;
@@ -569,6 +569,7 @@
     if (refreshTimer) clearInterval(refreshTimer);
     if (countdownTimer) clearInterval(countdownTimer);
     if (pollTimer) clearInterval(pollTimer);
+    if (passiveTimer) clearInterval(passiveTimer);
     countdown = 60;
     countdownValue.textContent = `${countdown}s`;
     // Auto data poll every 10s — shows latest saved data without triggering a scrape
@@ -581,7 +582,7 @@
       countdown = Math.max(0, countdown - 1);
       countdownValue.textContent = `${countdown}s`;
     }, 1000);
-    // Backup data poll — smarter, checks if data is stale instead of always refreshing
+    // Backup data poll — checks if data is stale instead of always refreshing
     pollTimer = setInterval(async () => {
       await loadStatus();
       const dotClass = sseDot.className;
@@ -590,6 +591,25 @@
         await smartRefresh();
       }
     }, 15000);
+
+    // Passive refresh — always fetch latest account data every 30s regardless of SSE state.
+    // This ensures the dashboard auto-updates even if SSE reconnects and misses events.
+    passiveTimer = setInterval(async () => {
+      try {
+        const r = await fetch('/api/accounts?ts=' + Date.now());
+        const a = await r.json();
+        const json = JSON.stringify(a);
+        if (json !== lastAccountsJson) {
+          lastAccountsJson = json;
+          renderStats(a);
+          renderRows(a);
+          const hasErr = a.some(x => x.error);
+          stEl.innerHTML = hasErr
+            ? `${a.length} accounts · <span style="color:var(--red)">${a.filter(x=>x.error).length} errors</span>`
+            : `${a.length} accounts · all ok`;
+        }
+      } catch {} // silent — main poll handles errors
+    }, 30000);
   }
 
   // Smart refresh — only re-render if data actually changed

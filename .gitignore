@@ -4,3 +4,4 @@ sessions/
 data/
 key.pem
 cert.pem
+.bak
