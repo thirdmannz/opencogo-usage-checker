@@ -1005,45 +1005,44 @@ async function scrapeAllAccounts() {
   try {
     const ACCOUNT_TIMEOUT_MS = 60_000; // 60s per account max
 
-  for (const name of names) {
-    try {
-      // Race the scrape against a per-account timeout
-      // Timeout handler does NOT try to close the browser (that can hang too)
-      // Instead, just returns timeout error and moves on
-      let timer;
-      const result = await Promise.race([
-        scrapeAccount(name)
-          .finally(() => clearTimeout(timer))
-          .finally(() => { closeActiveAccountBrowser(name).catch(() => {}); }), // clean up on success or error
-        new Promise(resolve => {
-          timer = setTimeout(() => {
-            console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
-            const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
-            saveAccountData(name, errResult);
-            // Force-kill orphaned Chrome — don't wait for Playwright APIs
-            killNewHeadlessChromePids([]);
-            resolve(errResult);
-          }, ACCOUNT_TIMEOUT_MS);
-        }),
-      ]);
-      results.push(result);
-    } catch (err) {
-      results.push({ name, error: err.message, scrapedAt: new Date().toISOString() });
-    }
-    // Delay between accounts to reduce memory pressure
-    await waitMs(2000);
-    // Hint GC after each account scrape
-    if (typeof global.gc === 'function') {
-      try { global.gc(); } catch {}
-    }
-  }
+    for (const name of names) {
+      try {
+        // Race the scrape against a per-account timeout
+        // Timeout handler does NOT try to close the browser (that can hang too)
+        // Instead, just returns timeout error and moves on
+        let timer;
+        const result = await Promise.race([
+          scrapeAccount(name)
+            .finally(() => clearTimeout(timer))
+            .finally(() => { closeActiveAccountBrowser(name).catch(() => {}); }),
+          new Promise(resolve => {
+            timer = setTimeout(() => {
+              console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
+              const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
+              saveAccountData(name, errResult);
+              // Force-kill orphaned Chrome — don't wait for Playwright APIs
+              killNewHeadlessChromePids([]);
+              resolve(errResult);
+            }, ACCOUNT_TIMEOUT_MS);
+          }),
+        ]);
+        results.push(result);
+      } catch (err) {
+        results.push({ name, error: err.message, scrapedAt: new Date().toISOString() });
+      }
+      // Delay between accounts to reduce memory pressure
+      await waitMs(2000);
+      // Hint GC after each account scrape
+      if (typeof global.gc === 'function') {
+        try { global.gc(); } catch {}
+      }
+    } // end for
   } catch (err) {
     console.error(`[scrapeAllAccounts] cycle error: ${err.message}`);
   } finally {
     done = true;
     clearTimeout(overallTimer);
-    lastAutoScrapeAt = lastAutoScrapeAt ||
-    new Date().toISOString();
+    lastAutoScrapeAt = lastAutoScrapeAt || new Date().toISOString();
     lastAutoScrapeResult = results;
     sseSend('scrape-complete', { at: lastAutoScrapeAt, count: results.length, results });
     killNewHeadlessChromePids([]);
