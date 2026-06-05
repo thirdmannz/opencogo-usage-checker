@@ -756,7 +756,24 @@ async function closeActiveAccountBrowser(name) {
 }
 
 
-async function scrapeAccount(name) {
+/** Safe wrapper — returns null if page/context/browser is closed */
+async function safePageOp(fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (/Target (page|context|browser) has been closed/i.test(e.message) || /Session closed/i.test(e.message)) {
+      return null;  // caller knows page is dead
+    }
+    throw e;
+  }
+}
+
+/** Wait for page to be alive and stable */
+function isPageAlive(page) {
+  return page && !page.isClosed() && page.context() && !page.context().browser()?.isConnected() === false;
+}
+
+async function scrapeAccount(name, _isRetry = false) {
   const pdir = profileDir(name);
   const key = String(name);
 
@@ -764,7 +781,7 @@ async function scrapeAccount(name) {
     return { name, error: 'No saved session. Run: node app.js add ' + name };
   }
 
-  if (activeScrapePromises.has(key)) return activeScrapePromises.get(key);
+  if (!_isRetry && activeScrapePromises.has(key)) return activeScrapePromises.get(key);
 
   const scrapePromise = (async () => {
     let browser;
@@ -783,6 +800,10 @@ async function scrapeAccount(name) {
 
       const rootPage = await context.newPage();
       await rootPage.goto('https://opencode.ai/go', { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+      // Page may have been redirected to login or closed after goto
+      if (rootPage.isClosed()) {
+        return { name, error: 'Page closed after navigation — session may be expired. Re-login: node app.js add ' + name, scrapedAt: new Date().toISOString() };
+      }
       await rootPage.waitForTimeout(1500);
 
       const cookies = await context.cookies('https://opencode.ai').catch(() => []);
@@ -807,7 +828,7 @@ async function scrapeAccount(name) {
         if (base) { workspaceUrl = `${base}/usage`; break; }
       }
 
-      if (!workspaceUrl) {
+      if (!workspaceUrl && !rootPage.isClosed()) {
         await rootPage.waitForLoadState('domcontentloaded').catch(() => {});
         const href = await rootPage.evaluate(() => {
           const a = Array.from(document.querySelectorAll('a[href*="/workspace/"]')).find(el => el.href && el.href.includes('/workspace/'));
@@ -829,14 +850,23 @@ async function scrapeAccount(name) {
       let goLimits = [];
       let goUrlFinal = null;
       if (goUrl) {
-        await page.goto(goUrl, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
-        await page.waitForTimeout(1500);
-        goUrlFinal = page.url();
+        const navOk = await safePageOp(() => page.goto(goUrl, { waitUntil: 'networkidle', timeout: 30000 }));
+        if (navOk === null) {
+          return { name, error: 'Browser closed while navigating to Go page — session may be expired. Re-login.', scrapedAt: new Date().toISOString() };
+        }
+        await safePageOp(() => page.waitForTimeout(1500));
+        goUrlFinal = page.isClosed() ? null : page.url();
         const goText = await page.locator('body').innerText().catch(() => '');
         goLimits = parseGoLimitText(goText);
       }
 
-      await page.goto(workspaceUrl, { waitUntil: 'networkidle', timeout: 30000 });
+      if (rootPage.isClosed()) {
+        return { name, error: 'Page closed after Go page — browser may have crashed. Re-login.', scrapedAt: new Date().toISOString() };
+      }
+      await page.goto(workspaceUrl, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+      if (page.isClosed()) {
+        return { name, error: 'Page closed after navigating to usage page.', scrapedAt: new Date().toISOString() };
+      }
       await page.waitForTimeout(1500);
 
       const result = await page.evaluate(() => {
@@ -934,6 +964,12 @@ async function scrapeAccount(name) {
       saveAccountData(name, output);
       return output;
     } catch (err) {
+      // "Target page/context/browser closed" = transient — retry once with fresh browser
+      if (!_isRetry && /Target (page|context|browser) has been closed/i.test(err.message)) {
+        console.log(`[scrape] ${name}: transient close error, retrying once…`);
+        activeScrapePromises.delete(key);
+        return scrapeAccount(name, true);
+      }
       const errResult = { name, error: err.message, scrapedAt: new Date().toISOString() };
       saveAccountData(name, errResult);
       return errResult;
