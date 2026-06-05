@@ -433,6 +433,7 @@ let autoScrapeRunning = false;
 let autoScrapeTimer = null;
 let lastAutoScrapeAt = null;
 let lastAutoScrapeResult = null;
+let scrapeAbortController = null; // used to cancel a stuck scrape on safety reset
 
 let addAccountState = { status: 'idle', name: null, error: null, startedAt: null };
 let addLoginAbort = new AbortController();
@@ -735,8 +736,8 @@ async function webAddAccount(name, provider = 'github', signal) {
   }
 }
 
-const activeScrapePromises = new Map();
 const activeScrapeContexts = new Map();
+const activeScrapePromises = new Map();
 
 function cleanupAccountArtifacts(name) {
   if (!fs.existsSync(SESSION_DIR)) return;
@@ -753,12 +754,10 @@ async function closeActiveAccountBrowser(name) {
   const key = String(name);
   const context = activeScrapeContexts.get(key);
   if (context) {
-    try {
-      // Get browser FIRST before closing context
-      const browser = context.browser();
-      await context.close().catch(() => {});
-      if (browser && browser.isConnected()) await browser.close().catch(() => {});
-    } catch {}
+    // Get browser FIRST before closing context
+    const browser = context.browser();
+    await context.close().catch(() => {});
+    if (browser && browser.isConnected()) await browser.close().catch(() => {});
   }
   activeScrapeContexts.delete(key);
 }
@@ -1025,29 +1024,37 @@ async function scrapeAccount(name, _isRetry = false) {
   }
 }
 
-async function scrapeAllAccounts() {
+async function scrapeAllAccounts(signal) {
   const names = listAccounts();
   const results = [];
 
-  // OVERALL safety: if the entire cycle takes > 5 minutes, force-return to unstick autoScrapeRunning
+  // OVERALL safety: if the entire cycle takes > 10 minutes, force-return to unstick autoScrapeRunning
+  // 4 accounts × 120s = 480s, plus delays/buffer → 10 min (600s)
   let done = false;
   const overallTimer = setTimeout(() => {
     if (!done) {
-      console.error('[scrapeAllAccounts] OVERALL TIMEOUT after 5min — force-returning');
+      console.error('[scrapeAllAccounts] OVERALL TIMEOUT after 10min — force-returning');
       killNewHeadlessChromePids([]);
-      lastAutoScrapeAt = lastAutoScrapeAt || new Date().toISOString();
+      lastAutoScrapeAt = new Date().toISOString();
     }
-  }, 5 * 60 * 1000);
+  }, 10 * 60 * 1000);
 
   try {
-    const ACCOUNT_TIMEOUT_MS = 45_000; // 45s per account max (Google OAuth redirects can be slow)
+    const ACCOUNT_TIMEOUT_MS = 120_000; // 120s per account max (accounts with 50+ usage rows need extra time)
 
     for (const name of names) {
+      // Check abort signal — stop early if safety reset fired
+      if (signal?.aborted) {
+        console.warn(`[scrapeAllAccounts] abort signal received, stopping cycle early`);
+        break;
+      }
       console.log(`[scrapeAllAccounts] starting account: ${name}`);
+      // Pre-cleanup: kill any orphaned Chrome from prior aborted timeouts
+      killNewHeadlessChromePids([]);
       try {
         // Race the scrape against a per-account timeout
-        // Timeout handler does NOT try to close the browser (that can hang too)
-        // Instead, just returns timeout error and moves on
+        // Timeout handler aggressively kills orphaned browser first,
+        // then saves the error so the cycle can continue without accumulating Chrome processes.
         let timer;
         const result = await Promise.race([
           scrapeAccountWithRetry(name)
@@ -1056,10 +1063,13 @@ async function scrapeAllAccounts() {
           new Promise(resolve => {
             timer = setTimeout(() => {
             console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
+            // Kill orphaned browser FIRST — prevents Chrome process accumulation
+            closeActiveAccountBrowser(name).catch(() => {});
+            killNewHeadlessChromePids([]);
             const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
             saveAccountData(name, errResult);
-            // Don't kill all Chromes here — the retry's browser may still be launching.
-            // Overall cycle cleanup runs in the finally block at the end of scrapeAllAccounts.
+            // Only kill the timed-out account's browser here.
+            // Full headless Chrome purge runs at the end of scrapeAllAccounts.
             resolve(errResult);
             }, ACCOUNT_TIMEOUT_MS);
           }),
@@ -1070,6 +1080,7 @@ async function scrapeAllAccounts() {
         results.push({ name, error: err.message, scrapedAt: new Date().toISOString() });
       }
       // Delay between accounts to reduce memory pressure
+      if (signal?.aborted) break;
       await waitMs(2000);
       // Hint GC after each account scrape
       if (typeof global.gc === 'function') {
@@ -1081,7 +1092,7 @@ async function scrapeAllAccounts() {
   } finally {
     done = true;
     clearTimeout(overallTimer);
-    lastAutoScrapeAt = lastAutoScrapeAt || new Date().toISOString();
+    lastAutoScrapeAt = new Date().toISOString();
     lastAutoScrapeResult = results;
     sseSend('scrape-complete', { at: lastAutoScrapeAt, count: results.length, results });
     killNewHeadlessChromePids([]);
@@ -1099,9 +1110,15 @@ function startAutoScrape() {
 
   const tick = async () => {
     if (autoScrapeRunning) {
-      // Safety: if autoScrapeRunning for >5 min without completing, force-reset
-      if (autoScrapeStartedAt && (Date.now() - autoScrapeStartedAt) > 5 * 60 * 1000) {
-        console.error('[auto] SAFETY: previous scrape stuck for >5min, force-resetting');
+      // Safety: if autoScrapeRunning for >12 min without completing, abort + force-reset
+      // 4 accounts × 120s = 480s, plus delays + buffer → 12 min (720s)
+      if (autoScrapeStartedAt && (Date.now() - autoScrapeStartedAt) > 12 * 60 * 1000) {
+        console.error('[auto] SAFETY: previous scrape stuck for >12min, aborting + force-resetting');
+        if (scrapeAbortController) {
+          scrapeAbortController.abort();
+          scrapeAbortController = null;
+        }
+        killNewHeadlessChromePids([]);
         autoScrapeRunning = false;
       } else {
         return;
@@ -1109,17 +1126,22 @@ function startAutoScrape() {
     }
     autoScrapeRunning = true;
     autoScrapeStartedAt = Date.now();
+    scrapeAbortController = new AbortController();
+    const signal = scrapeAbortController.signal;
     try {
       const count = listAccounts().length;
       if (count > 0) {
         console.log(`[auto] refreshing ${count} accounts...`);
-        await scrapeAllAccounts();
+        // Pass the signal so scrapeAllAccounts can abort its per-account timeouts
+        // and stop the loop early if the safety reset fires.
+        await scrapeAllAccounts(signal);
         console.log(`[auto] refresh complete at ${new Date().toISOString()}`);
       }
     } catch (err) {
       console.error(`[auto] refresh failed: ${err.message}`);
     } finally {
       autoScrapeRunning = false;
+      if (scrapeAbortController === signal) scrapeAbortController = null;
     }
   };
 

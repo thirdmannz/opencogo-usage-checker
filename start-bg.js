@@ -30,14 +30,14 @@ let isShuttingDown = false;
 // ── Health check ─────────────────────────────────────────────
 //
 // Key rules:
-//  - timeout is 60s because Playwright scraping blocks the event loop
+//  - timeout is 90s because Playwright scraping can delay responses
 //  - check every 30s
-//  - allow 3 consecutive failures before killing
-//    (so a max 90s event-loop block is tolerated)
+//  - allow 5 consecutive failures before killing
+//    (so a max 270s block is tolerated)
 //
 const HEALTH_INTERVAL_MS = 30000;
-const HEALTH_TIMEOUT_MS  = 60000;
-const MAX_HEALTH_FAILS   = 3;
+const HEALTH_TIMEOUT_MS  = 90000;
+const MAX_HEALTH_FAILS   = 5;
 
 function healthCheck(child) {
   if (healthTimer) clearInterval(healthTimer);
@@ -49,11 +49,12 @@ function healthCheck(child) {
       return;
     }
 
-    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, { timeout: HEALTH_TIMEOUT_MS }, (res) => {
+    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, (res) => {
       res.resume();
       healthFailCount = 0; // healthy — reset counter
     });
-    req.on('error', () => {
+    req.setTimeout(HEALTH_TIMEOUT_MS, () => {
+      req.destroy();
       healthFailCount++;
       if (healthFailCount >= MAX_HEALTH_FAILS) {
         console.log(`[bg] health failed ${healthFailCount}x — server unresponsive, killing PID ${child.pid}`);
@@ -63,6 +64,9 @@ function healthCheck(child) {
       } else {
         console.log(`[bg] health check failed (${healthFailCount}/${MAX_HEALTH_FAILS}) — waiting`);
       }
+    });
+    req.on('error', () => {
+      // error fires after req.destroy() from timeout, or ECONNREFUSED
     });
     req.end();
   }, HEALTH_INTERVAL_MS);
