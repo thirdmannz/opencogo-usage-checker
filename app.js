@@ -1266,7 +1266,7 @@ function createServer(port) {
   const certPath = path.join(BASE_DIR, 'cert.pem');
   const hasTls = fs.existsSync(keyPath) && fs.existsSync(certPath);
   const server = hasTls ? https.createServer({ key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }, app) : http.createServer(app);
-  server.listen(port, '0.0.0.0', () => {
+  server.listen(port, '::', () => {
     console.log(`\n  OpenCode Go Usage Dashboard`);
     console.log(hasTls ? `  https://localhost:${port}` : `  http://localhost:${port}`);
     console.log(hasTls ? `  https://127.0.0.1:${port}` : `  http://127.0.0.1:${port}`);
