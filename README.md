@@ -9,6 +9,8 @@ Local dashboard that reads your saved OpenCode Go sessions and shows current usa
 - **Auto-detect login sessions** — opens Chrome with CDP, detects auth cookie automatically, no manual file copying
 - **Per-account isolation** — each account runs its own headless Chrome scrape; concurrent scrapes don't interfere
 - **Auto-refresh** — dashboard polls every 60 seconds, API calls use cache-busting
+- **Crash-resilient** — server auto-restarts on crash via watchdog process, frontend reconnects automatically
+- **Memory-managed** — GC hints between scrape cycles, sequential account delays, heap size capped at 1GB
 - **LAN accessible** — server binds to `0.0.0.0:3333`, firewall rule auto-added
 - **HTTPS** — self-signed cert included, works on localhost and LAN
 - **Usage display** — shows Rolling, Weekly, Monthly usage percentages with color coding (green < 70%, yellow 70-90%, red > 90%)
@@ -18,10 +20,45 @@ Local dashboard that reads your saved OpenCode Go sessions and shows current usa
 ```bash
 cd ocwrapper
 npm install
+
+# Production (recommended) — auto-restarts on crash
+node start-bg.js --port 3333
+
+# Or just start directly
 node app.js server --port 3333
 ```
 
 Open `https://localhost:3333` in your browser.
+
+### Windows Batch
+
+```
+start.bat        # launches start-bg.js in background with auto-restart
+```
+
+## How It Works
+
+### Watchdog (`start-bg.js`)
+
+Runs the Express server as a child process. If the server crashes:
+- Prints exit code and runtime duration
+- Restarts immediately (or after 10s delay if exit was <5s, indicating a startup error)
+- Runs with `--expose-gc` and `--max-old-space-size=1024` to reduce OOM risk
+
+### Memory Management
+
+Each auto-scrape cycle (4 accounts):
+1. Each account scrape launches a headless Chromium (~200MB), scrapes, then closes
+2. A 2-second delay between accounts lets Node settle
+3. `global.gc()` is called after each account and at the end of the cycle
+4. Memory usage (RSS, heap, external) is logged per cycle for diagnostics
+
+### Frontend Reconnection
+
+The dashboard polls `/api/status` every 10 seconds. If the server goes offline and comes back:
+- The "Server status" card shows "Offline" during downtime
+- On reconnect, the frontend automatically reloads all account data
+- No manual page refresh needed
 
 ## Add an Account
 
@@ -39,31 +76,27 @@ Open `https://localhost:3333` in your browser.
 | `/api/accounts` | GET | List all saved accounts with usage data |
 | `/api/status` | GET | Server status (auto-scrape state, interval) |
 | `/api/refresh` | POST | Trigger manual scrape of all accounts |
-| `/api/add-account` | POST | Add account (`{ name, provider }`) |
+| `/api/add-account/:name` | POST | Add account (body: `{ provider }`) |
 | `/api/add-status` | GET | Current add-account status |
-| `/api/delete-account` | POST | Delete account (`{ name }`) |
+| `/api/accounts/:name` | DELETE | Delete account |
+| `/api/scrape/:name` | POST | Scrape single account |
+| `/api/scrape-all` | POST | Scrape all accounts |
 
 ## Configuration
 
 | Env Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3333` | Server port |
 | `OPENCODE_BROWSER_PATH` | auto-detect | Path to Chrome/Edge executable |
-| `OPENCODE_SCRAPE_INTERVAL` | `60000` | Auto-scrape interval in ms |
 
-## How It Works
-
-1. **Login flow**: Opens Chrome with remote debugging port (CDP), polls for `auth` cookie on `opencode.ai`. Once detected, saves the browser profile and storage state to `sessions/<email>/`. Falls back to profile inspection if Chrome closes quickly.
-
-2. **Scrape flow**: For each account, launches a headless Chromium with the saved session, navigates to `opencode.ai/go`, extracts usage limits from the page, saves to `data/<email>.json`.
-
-3. **Dashboard**: Reads `data/*.json` and displays usage percentages. Auto-refreshes every 60 seconds.
+The server port is set via `--port` flag (default: 3333).
 
 ## File Structure
 
 ```
 ocwrapper/
 ├── app.js              # Main server + scrape logic
+├── start-bg.js         # Watchdog launcher with auto-restart
+├── start.bat           # Windows batch launcher
 ├── public/
 │   └── index.html      # Dashboard UI
 ├── sessions/           # Saved browser profiles (one dir per account)
@@ -75,25 +108,38 @@ ocwrapper/
 
 ## 中文說明
 
-這是一個本地 dashboard，用來查看你的 OpenCode Go 用量限制。
+本地 dashboard，查看 OpenCode Go 用量限制。
 
 ### 功能
 - 自動偵測登入 session，不用手動複製檔案
-- 每個帳號獨立運行 headless Chrome，不會互相干擾
+- 每個帳號獨立 headless Chrome，不互相干擾
 - 每 60 秒自動更新
-- 可以從區網其他裝置訪問
+- 區網其他裝置可訪問
+- server crash 後自動重啟，前端自動重連
+- memory 管理：GC 提示、heap 上限 1GB
 
 ### 使用方式
-1. 執行 `node app.js server --port 3333`
-2. 瀏覽器開啟 `https://localhost:3333`
-3. 在 Add Account 欄位輸入帳號名稱
-4. 點 Add GitHub 或 Add Google
-5. Chrome 會自動開啟登入頁面
-6. 登入成功後 session 會自動儲存（通常 1-2 秒內）
-7. 不需要手動關閉 Chrome，隨時可以關
 
-### 注意事項
-- 首次使用需要 `npm install` 安裝相依套件
-- 使用自簽憑證，瀏覽器會跳出憑證警告，接受即可
-- 如果要在區網訪問，需要允許 TCP 3333 埠的連線
-- 帳號資料存在 `sessions/` 目錄，用量數據存在 `data/` 目錄
+```bash
+# 推薦：自動重啟
+node start-bg.js --port 3333
+
+# Windows
+start.bat
+
+# 直接啟動
+node app.js server --port 3333
+```
+
+1. 瀏覽器開啟 `https://localhost:3333`
+2. 在 Add Account 欄位輸入帳號名稱
+3. 點 Add GitHub 或 Add Google
+4. Chrome 自動開啟登入頁面
+5. 登入成功後 session 自動儲存（1-2 秒內）
+6. 不需要手動關閉 Chrome
+
+### 排障
+
+- server 被砍掉後 `start-bg.js` 會自動重啟，終端機會看到 `[bg] server exited after Xs`
+- 前端顯示 "Offline" 表示 server 暫時不可用，重啟後會自動刷新
+- `app.js` 會在每個 scrape 週期後印 `[memory] rss=XXXMB heap=XXX/XXXMB` 方便診斷
