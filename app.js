@@ -990,8 +990,6 @@ async function scrapeAccount(name, _isRetry = false) {
 }
 
 async function scrapeAllAccounts() {
-  // Clean orphaned headless Chrome PIDs before launching new ones
-  killNewHeadlessChromePids([]); // Kill ALL before starting clean
   const names = listAccounts();
   const results = [];
 
@@ -1014,12 +1012,16 @@ async function scrapeAllAccounts() {
       // Instead, just returns timeout error and moves on
       let timer;
       const result = await Promise.race([
-        scrapeAccount(name).finally(() => clearTimeout(timer)),
+        scrapeAccount(name)
+          .finally(() => clearTimeout(timer))
+          .finally(() => { closeActiveAccountBrowser(name).catch(() => {}); }), // clean up on success or error
         new Promise(resolve => {
           timer = setTimeout(() => {
             console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
             const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
             saveAccountData(name, errResult);
+            // Force-kill orphaned Chrome — don't wait for Playwright APIs
+            killNewHeadlessChromePids([]);
             resolve(errResult);
           }, ACCOUNT_TIMEOUT_MS);
         }),
