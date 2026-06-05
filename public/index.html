@@ -9,173 +9,217 @@
       --bg: #0b0f14;
       --panel: #121822;
       --panel-2: #171f2b;
-      --line: rgba(255,255,255,0.08);
+      --line: rgba(255,255,255,0.07);
       --text: #e7eef8;
       --muted: #8fa3bc;
       --accent: #5b8cff;
+      --accent-dim: rgba(91,140,255,0.12);
       --good: #35c759;
       --warn: #ffb020;
       --bad: #ff6b6b;
+      --radius: 14px;
+      --radius-sm: 10px;
+      --radius-xs: 8px;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: linear-gradient(180deg, #090c11 0%, #0b0f14 100%);
+      background: var(--bg);
       color: var(--text);
-      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
     }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    .wrap { max-width: 1160px; margin: 0 auto; padding: 28px 24px; }
+
+    /* ── Header ─────────────────────── */
     .top {
       display: flex; align-items: center; justify-content: space-between;
-      gap: 16px; margin-bottom: 18px;
+      gap: 16px; margin-bottom: 20px;
     }
-    h1 { margin: 0; font-size: 22px; font-weight: 700; }
-    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
-    .btns { display: flex; gap: 10px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: 12.5px; margin-top: 3px; opacity: 0.7; }
+    .btns { display: flex; gap: 8px; flex-wrap: wrap; }
     button {
       border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
-      padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 600;
+      padding: 8px 14px; border-radius: var(--radius-sm); cursor: pointer;
+      font-weight: 600; font-size: 13px; transition: all 0.18s ease;
     }
-    button.primary { background: var(--accent); border-color: transparent; color: white; }
-    button:hover { filter: brightness(1.08); }
+    button:hover { filter: brightness(1.12); border-color: rgba(255,255,255,0.14); }
+    button:active { transform: scale(0.97); }
+    button.primary {
+      background: var(--accent); border-color: transparent; color: white;
+      position: relative; overflow: hidden;
+    }
+    button.primary:hover { filter: brightness(1.1); }
+    button.primary:disabled { pointer-events: none; }
+
+    /* Refresh button loading state */
+    .refresh-loading {
+      color: transparent !important;
+      pointer-events: none !important;
+    }
+    .refresh-loading::after {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      top: 50%; left: 50%;
+      margin: -8px 0 0 -8px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Pulse ring on button after completion */
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(53,199,89,0.5); }
+      70% { box-shadow: 0 0 0 8px rgba(53,199,89,0); }
+      100% { box-shadow: 0 0 0 0 rgba(53,199,89,0); }
+    }
+    .refresh-done {
+      animation: pulse-ring 0.6s ease-out;
+      background: var(--good) !important;
+    }
+
+    /* ── Cards ──────────────────────── */
     .grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px;
-      margin: 16px 0 22px;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px;
+      margin: 14px 0 18px;
     }
     .card {
-      background: rgba(18, 24, 34, 0.9); border: 1px solid var(--line);
-      border-radius: 16px; padding: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+      background: rgba(18, 24, 34, 0.85);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      transition: border-color 0.2s ease;
     }
-    .card h3 { margin: 0 0 10px; font-size: 15px; }
-    .metric { display:flex; justify-content:space-between; gap:12px; margin: 6px 0; }
-    .metric span:first-child { color: var(--muted); }
-    .big { font-size: 28px; font-weight: 800; margin: 6px 0 12px; }
-    .tableWrap { overflow:auto; border:1px solid var(--line); border-radius:16px; background: rgba(18,24,34,0.9); }
-    table { width:100%; border-collapse: collapse; min-width: 780px; }
-    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align:left; vertical-align: top; }
-    th { position: sticky; top: 0; background: #131a25; z-index: 1; color: #c9d7ea; }
+    .card:hover { border-color: rgba(255,255,255,0.12); }
+    .card h3 {
+      margin: 0 0 8px; font-size: 12px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .big { font-size: 26px; font-weight: 800; margin: 4px 0 6px; letter-spacing: -0.03em; line-height: 1.1; }
+
+    /* ── Status cards row ────────────── */
+    .status-row {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px; margin-top: 2px;
+    }
+    .status-card { padding: 12px 14px; }
+    .status-card h3 { margin-bottom: 6px; font-size: 11px; }
+    .status-card .big { font-size: 20px; margin: 2px 0 4px; }
+
+    /* ── Table ──────────────────────── */
+    .tableWrap {
+      overflow: auto; border: 1px solid var(--line);
+      border-radius: var(--radius); background: rgba(18,24,34,0.85);
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; }
+    th, td {
+      padding: 11px 14px; border-bottom: 1px solid var(--line);
+      text-align: left; vertical-align: middle;
+    }
+    th {
+      position: sticky; top: 0; background: #12192a; z-index: 1;
+      color: var(--muted); font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    tr { transition: background 0.15s ease; }
     tr:hover td { background: rgba(255,255,255,0.02); }
+
+    /* Row flash on data update */
+    @keyframes row-flash {
+      0% { background: rgba(91,140,255,0.08); }
+      100% { background: transparent; }
+    }
+    .row-updated td { animation: row-flash 0.8s ease-out; }
+
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .muted { color: var(--muted); }
-    .right { text-align:right; }
-    .small { font-size: 12px; }
+    .right { text-align: right; }
+    .small { font-size: 11.5px; }
+
     .delBtn {
-      background: rgba(255,107,107,0.12); color: #ff9a9a; border: 1px solid rgba(255,107,107,0.25);
-      padding: 4px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600;
+      background: rgba(255,107,107,0.08); color: #ff9a9a;
+      border: 1px solid rgba(255,107,107,0.18);
+      padding: 4px 10px; border-radius: var(--radius-xs); cursor: pointer;
+      font-size: 11.5px; font-weight: 600; transition: all 0.15s ease;
     }
-    .delBtn:hover { background: rgba(255,107,107,0.3); }
-    .delBtn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .status { margin-top: 12px; color: var(--muted); }
-    .loading { opacity: 0.7; }
-    .err { color: var(--bad); }
-    .statusCell { display: grid; gap: 4px; }
-    .statusLine { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
-    .statusDot { width: 8px; height: 8px; border-radius: 999px; background: currentColor; flex: none; }
+    .delBtn:hover { background: rgba(255,107,107,0.22); border-color: rgba(255,107,107,0.35); }
+    .delBtn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* ── Status cell ───────────────── */
+    .statusCell { display: grid; gap: 3px; }
+    .statusLine { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
+    .statusDot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; flex: none; }
     .status-good { color: var(--good); }
     .status-warn { color: var(--warn); }
     .status-bad { color: var(--bad); }
-    .usageGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+
+    /* ── Usage cards ────────────────── */
+    .usageGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .usageCard {
       border: 1px solid var(--line);
-      border-radius: 12px;
-      background: rgba(255,255,255,0.02);
-      min-height: 72px;
-      display: grid;
-      place-items: center;
-      padding: 12px;
+      border-radius: var(--radius-sm);
+      background: rgba(255,255,255,0.015);
+      min-height: 68px;
+      display: grid; place-items: center;
+      padding: 10px;
+      transition: border-color 0.2s ease;
     }
-    .usageValue { font-size: 24px; font-weight: 750; letter-spacing: -0.02em; }
+    .usageCard:hover { border-color: rgba(255,255,255,0.14); }
+    .usageValue { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+    .usageLabel { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+    .usageReset { font-size: 10.5px; color: var(--muted); opacity: 0.7; }
+
+    /* ── Pills ──────────────────────── */
     .providerBadge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid var(--line);
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.01em;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px; border-radius: 999px;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--line);
+      color: var(--muted); font-size: 11px; font-weight: 600;
     }
-    .summaryMeta {
-      display: grid;
-      gap: 8px;
-      margin-top: 10px;
-    }
-    .summaryPills {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
+    .summaryPills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .summaryPill {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-      white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 9px; border-radius: 999px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--line);
+      color: var(--muted); font-size: 11.5px; font-weight: 500; white-space: nowrap;
     }
-    .summaryPill strong { color: var(--text); }
-    .summaryCardBody {
-      display: grid;
-      gap: 10px;
-    }
-    .summaryRow {
-      display: grid;
-      gap: 4px;
-    }
-    .summaryLabel {
-      color: var(--muted);
-      font-size: 12px;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-    }
-    .summaryValue {
-      font-size: 28px;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1;
-    }
-    .summaryValue.tight {
-      font-size: 26px;
-    }
-    .summaryFoot {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-    }
-    .summaryFoot .summaryPill {
-      max-width: 100%;
-    }
-    .summaryCost {
-      display: grid;
-      gap: 6px;
-    }
-    .summaryCost .big { margin: 0; }
+    .summaryPill strong { color: var(--text); font-weight: 600; }
+
+    /* ── SSE badge ──────────────────── */
     .sse-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 600;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px; border-radius: 999px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--line);
+      color: var(--muted); font-size: 10.5px; font-weight: 600; vertical-align: middle;
     }
-    .sse-badge .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
-    .sse-badge.connected { color: var(--good); border-color: rgba(53,199,89,0.3); }
-    .sse-badge.disconnected { color: var(--bad); border-color: rgba(255,107,107,0.3); }
+    .sse-badge .dot { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
+    .sse-badge.connected { color: var(--good); border-color: rgba(53,199,89,0.25); }
+    .sse-badge.disconnected { color: var(--bad); border-color: rgba(255,107,107,0.25); }
+
+    /* ── Footer status ──────────────── */
+    .status { margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .err { color: var(--bad); }
+
+    /* ── Skeleton loading ───────────── */
+    .skeleton {
+      background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s ease-in-out infinite;
+      border-radius: 6px;
+      min-height: 14px;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
     @media (max-width: 760px) {
       .usageGrid { grid-template-columns: 1fr; }
+      .top { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
@@ -183,26 +227,28 @@
   <div class="wrap">
   <div class="top">
     <div>
-      <h1>OpenCode Go Usage Dashboard</h1>
-      <div class="sub" id="subtitle">Auto-refresh runs every 60 seconds. Data updated in real-time.</div>
+      <h1>OpenCode Go Usage</h1>
+      <div class="sub">Scrape every 60s · push via SSE · dashboard auto-updates</div>
     </div>
     <div>
       <div class="btns">
-        <button class="primary" id="refreshBtn">Refresh all</button>
-        <button id="addGitHubBtn">Add GitHub</button>
-        <button id="addGoogleBtn">Add Google</button>
+        <button class="primary" id="refreshBtn">↻ Refresh all</button>
+        <button id="addGitHubBtn">+ GitHub</button>
+        <button id="addGoogleBtn">+ Google</button>
       </div>
-      <div class="sub" id="loginHint">Add an account. A new browser opens, then saves automatically after login.</div>
+      <div class="sub" id="loginHint">A new browser opens, login saves automatically.</div>
     </div>
   </div>
 
   <div class="grid" id="summary"></div>
-  <div class="status" id="autoStatus">Auto refresh: on, every 60 seconds. <span class="sse-badge disconnected" id="sseBadge"><span class="dot"></span>Live updates: disconnected</span></div>
+  <div class="status" id="autoStatus">
+    Auto refresh: every 60s · <span class="sse-badge disconnected" id="sseBadge"><span class="dot"></span>Live: off</span>
+  </div>
 
-  <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 0;">
-    <div class="card"><h3>Next check</h3><div class="big" id="countdown">60s</div><div class="muted">Front end polls once per minute</div></div>
-    <div class="card"><h3>Server status</h3><div class="big" id="serverState">—</div><div class="muted">From /api/status</div></div>
-    <div class="card"><h3>Login status</h3><div class="big" id="addState">—</div><div class="muted" id="addStateSub">Idle</div></div>
+  <div class="status-row" id="infoCards">
+    <div class="card status-card"><h3>Next check</h3><div class="big" id="countdown">60s</div><div class="sub">Auto refresh timer</div></div>
+    <div class="card status-card"><h3>Server</h3><div class="big" id="serverState">—</div><div class="sub">From /api/status</div></div>
+    <div class="card status-card"><h3>Login</h3><div class="big" id="addState">—</div><div class="sub" id="addStateSub">Idle</div></div>
   </div>
 
   <div class="tableWrap">
@@ -212,7 +258,7 @@
           <th>Account</th>
           <th>Status</th>
           <th>Usage</th>
-          <th>Action</th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -223,109 +269,81 @@
   </div>
 
   <script>
-    const statusEl = document.getElementById('status');
-    const autoStatusEl = document.getElementById('autoStatus');
-    const subtitleEl = document.getElementById('subtitle');
-    const countdownEl = document.getElementById('countdown');
-    const serverStateEl = document.getElementById('serverState');
-    const rowsEl = document.getElementById('rows');
-    const summaryEl = document.getElementById('summary');
-    const refreshBtn = document.getElementById('refreshBtn');
-    const addGitHubBtn = document.getElementById('addGitHubBtn');
-    const addGoogleBtn = document.getElementById('addGoogleBtn');
-    const addStateEl = document.getElementById('addState');
-    const addStateSubEl = document.getElementById('addStateSub');
-    const loginHintEl = document.getElementById('loginHint');
-    const sseBadge = document.getElementById('sseBadge');
+    const $ = id => document.getElementById(id);
+    const statusEl = $('status');
+    const autoStatusEl = $('autoStatus');
+    const countdownEl = $('countdown');
+    const serverStateEl = $('serverState');
+    const rowsEl = $('rows');
+    const summaryEl = $('summary');
+    const refreshBtn = $('refreshBtn');
+    const addGitHubBtn = $('addGitHubBtn');
+    const addGoogleBtn = $('addGoogleBtn');
+    const addStateEl = $('addState');
+    const addStateSubEl = $('addStateSub');
+    const loginHintEl = $('loginHint');
+    const sseBadge = $('sseBadge');
 
     let addStatusTimer = null;
-    let addPendingName = null;
-    let addPendingProvider = null;
     let lastServerScrapeAt = null;
     let lastServerSeen = false;
 
     const intervalMs = 60000;
     let countdown = intervalMs / 1000;
-    let refreshTimer = null;
-    let countdownTimer = null;
-    let serverPollTimer = null;
-    let sseReconnectTimer = null;
+    let refreshTimer, countdownTimer, serverPollTimer, sseReconnectTimer;
 
-    function fmt(v) { return (v === undefined || v === null || v === '') ? '—' : v; }
-    function safeText(v) { return (v === undefined || v === null || v === '') ? '—' : String(v); }
-    function providerLabel(provider, name = '') {
-      const lowerName = String(name || '').toLowerCase();
-      if (/@(gmail|googlemail)\.com$/.test(lowerName)) return 'Google';
-      const raw = String(provider || '').toLowerCase();
-      if (raw === 'google') return 'Google';
-      return 'GitHub';
+    // ── Helpers ────────────────────────────────────────────────
+    function safeText(v) { return v == null || v === '' ? '—' : String(v); }
+    function providerLabel(p, name = '') {
+      if (/@(gmail|googlemail)\.com$/.test(String(name).toLowerCase())) return 'Google';
+      return String(p || '').toLowerCase() === 'google' ? 'Google' : 'GitHub';
     }
-    function formatMoney(amount, digits = 4) {
-      const value = Number.parseFloat(amount);
-      if (!Number.isFinite(value)) return `$0.${'0'.repeat(digits)}`;
-      return `$${value.toFixed(digits)}`;
+    function fmtMoney(amt, d = 4) {
+      const v = Number.parseFloat(amt);
+      if (!Number.isFinite(v)) return `$0.${'0'.repeat(d)}`;
+      return `$${v.toFixed(d)}`;
+    }
+    function ago(iso) {
+      if (!iso) return '';
+      const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+      return `${Math.floor(s / 86400)}d ago`;
     }
 
+    // ── Render ─────────────────────────────────────────────────
     function renderSummary(accounts) {
-      const total = accounts.length;
+      const n = accounts.length;
       const ok = accounts.filter(a => !a.error).length;
-      const withCost = accounts.filter(a => a.totalCost !== undefined && a.totalCost !== null).length;
-      const sumCost = accounts.reduce((n, a) => n + (parseFloat(a.totalCost) || 0), 0);
-      const providers = accounts.reduce((acc, a) => {
-        const key = String(a.provider || 'github').toLowerCase();
-        acc[key] = (acc[key] || 0) + 1;
-        return acc;
-      }, {});
-      const topProvider = Object.entries(providers).sort((a, b) => b[1] - a[1])[0] || ['github', 0];
-      // Find latest scrape time
-      const scrapedAts = accounts.map(a => a.scrapedAt).filter(Boolean).sort().reverse();
-      const latestScrape = scrapedAts[0] || null;
-      let lastScrapeStr = '';
-      if (latestScrape) {
-        const diff = Math.floor((Date.now() - new Date(latestScrape).getTime()) / 1000);
-        if (diff < 60) lastScrapeStr = `${diff}s ago`;
-        else if (diff < 3600) lastScrapeStr = `${Math.floor(diff / 60)}m ago`;
-        else if (diff < 86400) lastScrapeStr = `${Math.floor(diff / 3600)}h ago`;
-        else lastScrapeStr = `${Math.floor(diff / 86400)}d ago`;
-      }
+      const errs = n - ok;
+      const sumCost = accounts.reduce((s, a) => s + (parseFloat(a.totalCost) || 0), 0);
+      const latest = accounts.map(a => a.scrapedAt).filter(Boolean).sort().reverse()[0];
+      const providers = {};
+      accounts.forEach(a => { const k = String(a.provider || 'github').toLowerCase(); providers[k] = (providers[k] || 0) + 1; });
+
       summaryEl.innerHTML = `
         <div class="card">
           <h3>Accounts</h3>
-          <div class="summaryCardBody">
-            <div class="summaryRow">
-              <div class="summaryLabel">Saved sessions</div>
-              <div class="summaryValue">${total}</div>
-            </div>
-            <div class="summaryFoot">
-              <span class="summaryPill"><strong>${providers.github || 0}</strong> GitHub</span>
-              <span class="summaryPill"><strong>${providers.google || 0}</strong> Google</span>
-              ${latestScrape ? `<span class="summaryPill">Last update <strong>${lastScrapeStr}</strong></span>` : ''}
-            </div>
+          <div class="big">${n}</div>
+          <div class="summaryPills">
+            <span class="summaryPill"><strong>${providers.github || 0}</strong> GitHub</span>
+            <span class="summaryPill"><strong>${providers.google || 0}</strong> Google</span>
+            ${latest ? `<span class="summaryPill">Updated <strong>${ago(latest)}</strong></span>` : ''}
           </div>
         </div>
         <div class="card">
-          <h3>Healthy</h3>
-          <div class="summaryCardBody">
-            <div class="summaryRow">
-              <div class="summaryLabel">Readable accounts</div>
-              <div class="summaryValue">${ok}</div>
-            </div>
-            <div class="summaryFoot">
-              <span class="summaryPill">Portal OK</span>
-            </div>
+          <h3>Health</h3>
+          <div class="big" style="color:${errs ? 'var(--bad)' : 'var(--good)'}">${ok}/${n}</div>
+          <div class="summaryPills">
+            ${errs ? `<span class="summaryPill" style="color:var(--bad)"><strong>${errs}</strong> error</span>` : '<span class="summaryPill" style="color:var(--good)">All OK</span>'}
           </div>
         </div>
         <div class="card">
-          <h3>Total cost</h3>
-          <div class="summaryCardBody">
-            <div class="summaryRow">
-              <div class="summaryLabel">Spend</div>
-              <div class="summaryValue tight">$${sumCost.toFixed(2)}</div>
-            </div>
-            <div class="summaryFoot">
-              <span class="summaryPill"><strong>${withCost}</strong> rows</span>
-              <span class="summaryPill">Top source <strong>${safeText(topProvider[0])}</strong></span>
-            </div>
+          <h3>Total Cost</h3>
+          <div class="big">$${sumCost.toFixed(2)}</div>
+          <div class="summaryPills">
+            <span class="summaryPill">From <strong>${accounts.filter(a => a.totalCost).length}</strong> accounts</span>
           </div>
         </div>
       `;
@@ -333,178 +351,143 @@
 
     function renderUsageLimits(a) {
       const limits = Array.isArray(a.goLimits) ? a.goLimits : [];
-      if (!limits.length) {
-        return `<div class="muted small">No usage data</div>`;
-      }
-      return `<div class="usageGrid">${limits.map(limit => {
-        const pct = Number.parseFloat(String(limit.percentValue ?? limit.percentage ?? '0')) || 0;
+      if (!limits.length) return '<span class="muted small">No usage data</span>';
+      return `<div class="usageGrid">${limits.map(l => {
+        const pct = Number.parseFloat(String(l.percentValue ?? l.percentage ?? '0')) || 0;
         const color = pct >= 90 ? 'var(--bad)' : pct >= 70 ? 'var(--warn)' : 'var(--accent)';
         return `
           <div class="usageCard">
-            <div class="small muted" style="margin-bottom:2px">${safeText(limit.label).replace(' Usage', '')}</div>
-            <div class="usageValue" style="color:${color}">${safeText(limit.percentage)}</div>
-            <div class="small muted">${safeText(limit.reset || '—')}</div>
+            <div class="usageLabel">${safeText(l.label).replace(' Usage', '')}</div>
+            <div class="usageValue" style="color:${color}">${safeText(l.percentage)}</div>
+            <div class="usageReset">${safeText(l.reset || '')}</div>
           </div>`;
       }).join('')}</div>`;
     }
 
     function statusMarkup(a) {
-      if (a.error) {
-        return `
-          <div class="statusCell">
-            <div class="statusLine status-bad"><span class="statusDot"></span><span>Error</span></div>
-            <div class="small muted">${safeText(a.error)}</div>
-          </div>`;
-      }
-      if (!a.scrapedAt) {
-        return `
-          <div class="statusCell">
-            <div class="statusLine status-warn"><span class="statusDot"></span><span>Pending</span></div>
-            <div class="small muted">Waiting for first sync</div>
-          </div>`;
-      }
-      return `
-        <div class="statusCell">
-          <div class="statusLine status-good"><span class="statusDot"></span><span>Updated</span></div>
-          <div class="small muted">${a.scrapedAt ? new Date(a.scrapedAt).toLocaleString() : '—'}</div>
-        </div>`;
+      if (a.error)
+        return `<div class="statusCell"><div class="statusLine status-bad"><span class="statusDot"></span>Error</div><div class="small muted">${safeText(a.error)}</div></div>`;
+      if (!a.scrapedAt)
+        return `<div class="statusCell"><div class="statusLine status-warn"><span class="statusDot"></span>Pending</div><div class="small muted">Waiting for sync</div></div>`;
+      return `<div class="statusCell"><div class="statusLine status-good"><span class="statusDot"></span>OK</div><div class="small muted">${ago(a.scrapedAt)}</div></div>`;
     }
 
     function renderRows(accounts) {
+      const hadAccounts = rowsEl.children.length > 0;
       rowsEl.innerHTML = accounts.map(a => {
-        const provider = providerLabel(a.provider, a.name);
-        const totalCost = a.totalCost !== undefined && a.totalCost !== null ? formatMoney(a.totalCost, 4) : '—';
-        const balance = a.currentBalance !== undefined && a.currentBalance !== null ? formatMoney(a.currentBalance, 2) : '—';
+        const p = providerLabel(a.provider, a.name);
+        const cost = a.totalCost != null ? fmtMoney(a.totalCost, 4) : '—';
         return `
           <tr data-account="${safeText(a.name)}">
             <td>
-              <div><strong>${safeText(a.name)}</strong></div>
-              <div class="small muted mono"><span class="providerBadge">${provider}</span></div>
+              <div style="font-weight:600">${safeText(a.name)}</div>
+              <span class="providerBadge">${p}</span>
             </td>
             <td>${statusMarkup(a)}</td>
             <td>
               ${renderUsageLimits(a)}
-              <div class="summaryMeta">
-                <div class="summaryPills">
-                  <span class="summaryPill">Current balance <strong>${balance}</strong></span>
-                  <span class="summaryPill">Total cost <strong>${totalCost}</strong></span>
-                </div>
+              <div class="summaryPills">
+                <span class="summaryPill">Total cost <strong>${cost}</strong></span>
               </div>
             </td>
             <td><button class="delBtn" data-delete-name="${safeText(a.name)}">Delete</button></td>
-          </tr>
-        `;
+          </tr>`;
       }).join('');
+
+      // Flash updated rows
+      if (hadAccounts) {
+        rowsEl.querySelectorAll('tr').forEach(tr => {
+          tr.classList.add('row-updated');
+          setTimeout(() => tr.classList.remove('row-updated'), 900);
+        });
+      }
 
       rowsEl.querySelectorAll('[data-delete-name]').forEach(btn => {
         btn.addEventListener('click', () => deleteAccount(btn.dataset.deleteName));
       });
     }
 
-    // ── SSE connection ──────────────────────────────────────────────
+    // ── Refresh button states ──────────────────────────────────
+    function setRefreshLoading(on) {
+      if (on) {
+        refreshBtn.classList.add('refresh-loading');
+        refreshBtn.disabled = true;
+      } else {
+        refreshBtn.classList.remove('refresh-loading');
+        refreshBtn.disabled = false;
+      }
+    }
+    function flashRefreshDone() {
+      refreshBtn.classList.add('refresh-done');
+      refreshBtn.innerHTML = '✓ Done';
+      setTimeout(() => {
+        refreshBtn.classList.remove('refresh-done');
+        refreshBtn.innerHTML = '↻ Refresh all';
+      }, 1200);
+    }
+
+    // ── SSE ────────────────────────────────────────────────────
     function connectSSE() {
       if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
-
       sseBadge.className = 'sse-badge disconnected';
-      sseBadge.innerHTML = '<span class="dot"></span>Live updates: connecting…';
+      sseBadge.innerHTML = '<span class="dot"></span>Live: connecting';
 
       const es = new EventSource('/api/events');
-
       es.addEventListener('open', () => {
-        console.log('[sse] connected');
         sseBadge.className = 'sse-badge connected';
-        sseBadge.innerHTML = '<span class="dot"></span>Live updates: connected';
+        sseBadge.innerHTML = '<span class="dot"></span>Live: on';
       });
-
       es.addEventListener('server-state', (e) => {
         try {
-          const state = JSON.parse(e.data);
-          serverStateEl.textContent = state.autoScrapeRunning ? 'Running' : 'Idle';
+          const st = JSON.parse(e.data);
+          serverStateEl.textContent = st.autoScrapeRunning ? 'Running' : 'Idle';
         } catch {}
       });
-
-      es.addEventListener('scrape-complete', (e) => {
-        console.log('[sse] scrape-complete received');
-        autoStatusEl.textContent = 'Auto refresh: completed — updating data…';
-        loadAccounts(); // reload immediately on push
-      });
-
-      es.addEventListener('add-complete', (e) => {
-        console.log('[sse] add-complete received');
+      es.addEventListener('scrape-complete', () => {
         loadAccounts();
+        flashRefreshDone();
       });
-
+      es.addEventListener('add-complete', () => { loadAccounts(); });
       es.onerror = () => {
-        console.log('[sse] connection lost');
         sseBadge.className = 'sse-badge disconnected';
-        sseBadge.innerHTML = '<span class="dot"></span>Live updates: disconnected (reconnecting…)';
+        sseBadge.innerHTML = '<span class="dot"></span>Live: reconnecting';
         es.close();
-        // Aggressive reconnect: 1s, then 3s, then 10s
-        sseReconnectTimer = setTimeout(connectSSE, 1000);
-        // Also immediately fetch data since SSE is down
+        sseReconnectTimer = setTimeout(connectSSE, 1500);
         loadStatus();
       };
     }
 
-    // ── Polling / Status ───────────────────────────────────────────
+    // ── Polling ────────────────────────────────────────────────
     async function loadStatus() {
       try {
-        const res = await fetch('/api/status?ts=' + Date.now());
-        const status = await res.json();
-
+        const r = await fetch('/api/status?ts=' + Date.now());
+        const s = await r.json();
         if (!lastServerSeen) {
           lastServerSeen = true;
-          console.log('[frontend] server online — reloading all data');
-          // Force full refresh + reconnect SSE if down
-          if (!sseBadge.className.includes('connected')) {
-            connectSSE();
-          }
+          if (!sseBadge.className.includes('connected')) connectSSE();
           await loadAccounts();
-          // Reset countdown so next poll happens sooner
-          countdown = 10;
-          countdownEl.textContent = `${countdown}s`;
         }
-
-        serverStateEl.textContent = status.autoScrapeRunning ? 'Running' : 'Idle';
-        autoStatusEl.textContent = `Auto refresh: ${status.autoScrapeRunning ? 'running' : 'idle'}, every ${Math.round((status.intervalMs || intervalMs) / 1000)} seconds.`;
-
-        if (status.lastAutoScrapeAt && status.lastAutoScrapeAt !== lastServerScrapeAt) {
-          lastServerScrapeAt = status.lastAutoScrapeAt;
+        serverStateEl.textContent = s.autoScrapeRunning ? 'Running' : 'Idle';
+        if (s.lastAutoScrapeAt && s.lastAutoScrapeAt !== lastServerScrapeAt) {
+          lastServerScrapeAt = s.lastAutoScrapeAt;
           loadAccounts();
         }
-      } catch (e) {
-        if (lastServerSeen) {
-          lastServerSeen = false;
-          console.log('[frontend] server offline — will reload on reconnect');
-        }
+      } catch {
+        lastServerSeen = false;
         serverStateEl.textContent = 'Offline';
-        autoStatusEl.textContent = 'Auto refresh: server unreachable.';
       }
     }
 
     async function loadAddStatus() {
       try {
-        const res = await fetch('/api/add-status?ts=' + Date.now());
-        const state = await res.json();
-        addStateEl.textContent = state.status || 'idle';
-        if (state.status === 'idle') {
-          addStateSubEl.textContent = 'Idle';
-        } else if (state.status === 'opening') {
-          addStateSubEl.textContent = `Opening browser: ${state.name || '—'}`;
-        } else if (state.status === 'logging_in') {
-          addStateSubEl.textContent = `Waiting for login in the browser: ${state.name || '—'}`;
-        } else if (state.status === 'saving') {
-          addStateSubEl.textContent = `Saving session: ${state.name || '—'}`;
-        } else if (state.status === 'done') {
-          addStateSubEl.textContent = `Done: ${state.name || '—'}`;
-        } else if (state.status === 'error') {
-          addStateSubEl.textContent = state.error || 'Login failed';
-        } else {
-          addStateSubEl.textContent = state.name || '—';
-        }
-      } catch (e) {
+        const r = await fetch('/api/add-status?ts=' + Date.now());
+        const s = await r.json();
+        const map = { idle: 'Idle', opening: `Opening: ${s.name||'—'}`, logging_in: `Login: ${s.name||'—'}`, saving: `Saving: ${s.name||'—'}`, done: `Done: ${s.name||'—'}`, error: s.error || 'Failed' };
+        addStateEl.textContent = s.status || 'idle';
+        addStateSubEl.textContent = map[s.status] || s.name || '—';
+      } catch {
         addStateEl.textContent = 'Offline';
-        addStateSubEl.textContent = 'Cannot read login status';
+        addStateSubEl.textContent = '—';
       }
     }
 
@@ -514,106 +497,70 @@
       addStatusTimer = setInterval(async () => {
         await loadAddStatus();
         try {
-          const res = await fetch('/api/add-status?ts=' + Date.now());
-          const state = await res.json();
-          if (state.status === 'done' || state.status === 'error' || state.status === 'idle') {
-            clearInterval(addStatusTimer);
-            addStatusTimer = null;
-            addPendingName = null;
-            addPendingProvider = null;
-            loginHintEl.textContent = 'Add an account. A new browser opens, then saves automatically after login.';
-            await refreshAll();
+          const r = await fetch('/api/add-status?ts=' + Date.now());
+          const s = await r.json();
+          if (['done','error','idle'].includes(s.status)) {
+            clearInterval(addStatusTimer); addStatusTimer = null;
+            loginHintEl.textContent = 'A new browser opens, login saves automatically.';
+            refreshAll();
           }
         } catch {}
       }, 3000);
     }
 
     async function startAddAccount(provider) {
-      const name = prompt(`Enter ${provider} account name (for example github-1 / google-1)`);
+      const name = prompt(`Enter ${provider} account name (e.g. ${provider}-1)`);
       if (!name) return;
-      addPendingName = name;
-      addPendingProvider = provider;
-      if (addStateEl.textContent !== 'idle' && addStateEl.textContent !== '') {
-        loginHintEl.textContent = `Previous login cancelled. Starting new: ${name} / ${provider}. Finish it in the new browser.`;
-      } else {
-        loginHintEl.textContent = `Login started: ${name} / ${provider}. Finish it in the new browser.`;
-      }
+      loginHintEl.textContent = `Login: ${name} (${provider}). Complete in the browser.`;
       addStateEl.textContent = 'opening';
-      addStateSubEl.textContent = `Starting ${provider} login: ${name}`;
-      const res = await fetch(`/api/add-account/${encodeURIComponent(name)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      addStateSubEl.textContent = `Starting: ${name}`;
+      const r = await fetch(`/api/add-account/${encodeURIComponent(name)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider })
       });
-      const payload = await res.json();
-      if (!res.ok) {
-        addStateEl.textContent = 'error';
-        addStateSubEl.textContent = payload.error || 'Start failed';
-        loginHintEl.textContent = 'Add failed.';
-        return;
-      }
+      const p = await r.json();
+      if (!r.ok) { addStateSubEl.textContent = p.error || 'Failed'; return; }
       await pollAddStatusUntilDone();
-      await loadAccounts();
+      loadAccounts();
     }
 
     async function loadAccounts() {
-      statusEl.textContent = 'Loading accounts…';
+      statusEl.textContent = 'Loading…';
       try {
-        const res = await fetch('/api/accounts?ts=' + Date.now());
-        const accounts = await res.json();
-        renderSummary(accounts);
-        renderRows(accounts);
-        statusEl.textContent = `Loaded ${accounts.length} accounts.`;
+        const r = await fetch('/api/accounts?ts=' + Date.now());
+        const a = await r.json();
+        renderSummary(a); renderRows(a);
+        statusEl.textContent = `${a.length} accounts loaded.`;
       } catch (e) {
         statusEl.innerHTML = `<span class="err">Load failed:</span> ${e.message}`;
       }
     }
 
     async function deleteAccount(name) {
-      if (!confirm(`Delete account "${name}"?\nThis removes the session cookie and usage data. It cannot be undone.`)) return;
-      statusEl.textContent = `Deleting: ${name}…`;
-      try {
-        const res = await fetch(`/api/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
-        const payload = await res.json();
-        if (payload.ok) {
-          statusEl.textContent = `Deleted: ${name}`;
-          await loadAccounts();
-        } else {
-          statusEl.innerHTML = `<span class="err">Delete failed:</span> ${payload.error || 'unknown'}`;
-        }
-      } catch (e) {
-        statusEl.innerHTML = `<span class="err">Delete failed:</span> ${e.message}`;
-      }
+      if (!confirm(`Delete "${name}"? This removes all session data.`)) return;
+      statusEl.textContent = `Deleting ${name}…`;
+      const r = await fetch(`/api/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const p = await r.json();
+      if (p.ok) { statusEl.textContent = `Deleted: ${name}`; loadAccounts(); }
+      else { statusEl.innerHTML = `<span class="err">${p.error || 'Failed'}</span>`; }
     }
 
     async function refreshAll() {
-      refreshBtn.disabled = true;
-      try {
-        await Promise.all([loadAccounts(), loadStatus()]);
-      } finally {
-        refreshBtn.disabled = false;
-      }
+      setRefreshLoading(true);
+      try { await Promise.all([loadAccounts(), loadStatus()]); } finally { setRefreshLoading(false); }
     }
 
     async function scrapeAll() {
-      statusEl.textContent = 'Refreshing… this opens the browser and updates each account.';
-      refreshBtn.disabled = true;
+      setRefreshLoading(true);
+      statusEl.textContent = 'Refreshing… opening browsers for each account.';
       try {
-        const res = await fetch('/api/refresh?ts=' + Date.now(), { method: 'POST' });
-        const payload = await res.json();
-        if (payload.results) {
-          renderSummary(payload.results);
-          renderRows(payload.results);
-          statusEl.textContent = `Done. Updated ${payload.count} accounts.`;
-        } else {
-          statusEl.innerHTML = `<span class="err">Refresh failed:</span> ${payload.error || 'unknown error'}`;
-        }
-        await loadStatus();
-      } catch (e) {
-        statusEl.innerHTML = `<span class="err">Refresh failed:</span> ${e.message}`;
-      } finally {
-        refreshBtn.disabled = false;
-      }
+        const r = await fetch('/api/refresh?ts=' + Date.now(), { method: 'POST' });
+        const p = await r.json();
+        if (p.results) { renderSummary(p.results); renderRows(p.results); }
+        statusEl.textContent = p.results ? `Done. ${p.count} accounts updated.` : `Error: ${p.error}`;
+        loadStatus();
+      } catch (e) { statusEl.innerHTML = `<span class="err">Failed:</span> ${e.message}`; }
+      finally { setRefreshLoading(false); flashRefreshDone(); }
     }
 
     function startTimers() {
@@ -622,28 +569,15 @@
       if (serverPollTimer) clearInterval(serverPollTimer);
       countdown = intervalMs / 1000;
       countdownEl.textContent = `${countdown}s`;
-      refreshTimer = setInterval(() => {
-        refreshAll();
-        countdown = intervalMs / 1000;
-      }, intervalMs);
-      countdownTimer = setInterval(() => {
-        countdown -= 1;
-        if (countdown <= 0) countdown = intervalMs / 1000;
-        countdownEl.textContent = `${countdown}s`;
-      }, 1000);
-      // Poll server status every 5s for fast crash recovery detection
-      serverPollTimer = setInterval(() => {
-        loadStatus();
-      }, 5000);
+      refreshTimer = setInterval(() => { refreshAll(); countdown = intervalMs / 1000; }, intervalMs);
+      countdownTimer = setInterval(() => { countdown = Math.max(0, countdown - 1); countdownEl.textContent = `${countdown}s`; }, 1000);
+      serverPollTimer = setInterval(loadStatus, 5000);
     }
 
     refreshBtn.addEventListener('click', scrapeAll);
     addGitHubBtn.addEventListener('click', () => void startAddAccount('github'));
     addGoogleBtn.addEventListener('click', () => void startAddAccount('google'));
-    refreshAll();
-    loadAddStatus();
-    startTimers();
-    connectSSE();
+    refreshAll(); loadAddStatus(); startTimers(); connectSSE();
   </script>
 </body>
 </html>
