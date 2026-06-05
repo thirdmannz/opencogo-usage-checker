@@ -12,7 +12,7 @@ Local dashboard that reads your saved OpenCode Go sessions and shows current usa
 - **Crash-resilient** — server auto-restarts on crash via watchdog process with health checks, frontend reconnects automatically
 - **Abort-capable** — stuck scrape cycles are auto-aborted and Chrome cleaned up; prevents process accumulation
 - **Memory-managed** — GC hints between scrape cycles, sequential account delays, heap size capped at 1GB
-- **LAN accessible** — server binds to `0.0.0.0:3333`, firewall rule auto-added
+- **LAN accessible** — server binds to `:::3333` (all IPv4 + IPv6 interfaces)
 - **HTTPS** — self-signed cert included, works on localhost and LAN
 - **Usage display** — shows Rolling, Weekly, Monthly usage percentages with color coding (green < 70%, yellow 70-90%, red > 90%)
 
