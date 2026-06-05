@@ -2,3 +2,5 @@
 node_modules/
 sessions/
 data/
+key.pem
+cert.pem
