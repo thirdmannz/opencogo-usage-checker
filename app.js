@@ -1057,17 +1057,20 @@ async function scrapeAllAccounts() {
 function startAutoScrape() {
   if (autoScrapeTimer) return;
 
+  let autoScrapeStartedAt = null;
+
   const tick = async () => {
     if (autoScrapeRunning) {
-      // Safety: if autoScrapeRunning for >5 min, force-reset
-      if (lastAutoScrapeAt === null || (Date.now() - new Date(lastAutoScrapeAt).getTime()) > 5 * 60 * 1000) {
-        console.error('[auto] SAFETY: previous scrape appears stuck, force-resetting');
+      // Safety: if autoScrapeRunning for >5 min without completing, force-reset
+      if (autoScrapeStartedAt && (Date.now() - autoScrapeStartedAt) > 5 * 60 * 1000) {
+        console.error('[auto] SAFETY: previous scrape stuck for >5min, force-resetting');
         autoScrapeRunning = false;
       } else {
         return;
       }
     }
     autoScrapeRunning = true;
+    autoScrapeStartedAt = Date.now();
     try {
       const count = listAccounts().length;
       if (count > 0) {
