@@ -174,7 +174,6 @@
     <div>
       <div class="btns">
         <button class="primary" id="refreshBtn">Refresh all</button>
-        <button id="scrapeBtn">Rescrape</button>
         <button id="addGitHubBtn">Add GitHub</button>
         <button id="addGoogleBtn">Add Google</button>
       </div>
@@ -216,7 +215,6 @@
     const rowsEl = document.getElementById('rows');
     const summaryEl = document.getElementById('summary');
     const refreshBtn = document.getElementById('refreshBtn');
-    const scrapeBtn = document.getElementById('scrapeBtn');
     const addGitHubBtn = document.getElementById('addGitHubBtn');
     const addGoogleBtn = document.getElementById('addGoogleBtn');
     const addStateEl = document.getElementById('addState');
@@ -226,11 +224,14 @@
     let addStatusTimer = null;
     let addPendingName = null;
     let addPendingProvider = null;
+    let lastServerScrapeAt = null;
+    let lastServerSeen = false;           // to detect reconnect after crash
 
     const intervalMs = 60000;
     let countdown = intervalMs / 1000;
     let refreshTimer = null;
     let countdownTimer = null;
+    let serverPollTimer = null;
 
     function fmt(v) { return (v === undefined || v === null || v === '') ? '—' : v; }
     function safeText(v) { return (v === undefined || v === null || v === '') ? '—' : String(v); }
@@ -379,11 +380,28 @@
       try {
         const res = await fetch('/api/status?ts=' + Date.now());
         const status = await res.json();
+
+        // Detect server restart: was offline but now online
+        if (!lastServerSeen) {
+          lastServerSeen = true;
+          console.log('[frontend] server online — reloading data');
+          await loadAccounts();
+        }
+
         serverStateEl.textContent = status.autoScrapeRunning ? 'Running' : 'Idle';
         autoStatusEl.textContent = `Auto refresh: ${status.autoScrapeRunning ? 'running' : 'idle'}, every ${Math.round((status.intervalMs || intervalMs) / 1000)} seconds.`;
+        // Auto-refresh accounts when server finishes a new scrape
+        if (status.lastAutoScrapeAt && status.lastAutoScrapeAt !== lastServerScrapeAt) {
+          lastServerScrapeAt = status.lastAutoScrapeAt;
+          loadAccounts();
+        }
       } catch (e) {
+        if (lastServerSeen) {
+          lastServerSeen = false;
+          console.log('[frontend] server offline — will reload on reconnect');
+        }
         serverStateEl.textContent = 'Offline';
-        autoStatusEl.textContent = 'Auto refresh: status fetch failed.';
+        autoStatusEl.textContent = 'Auto refresh: server unreachable.';
       }
     }
 
@@ -438,7 +456,12 @@
       if (!name) return;
       addPendingName = name;
       addPendingProvider = provider;
-      loginHintEl.textContent = `Login started: ${name} / ${provider}. Finish it in the new browser.`;
+      // If a login was pending, show cancel hint
+      if (addStateEl.textContent !== 'idle' && addStateEl.textContent !== '') {
+        loginHintEl.textContent = `Previous login cancelled. Starting new: ${name} / ${provider}. Finish it in the new browser.`;
+      } else {
+        loginHintEl.textContent = `Login started: ${name} / ${provider}. Finish it in the new browser.`;
+      }
       addStateEl.textContent = 'opening';
       addStateSubEl.textContent = `Starting ${provider} login: ${name}`;
       const res = await fetch(`/api/add-account/${encodeURIComponent(name)}`, {
@@ -489,18 +512,15 @@
 
     async function refreshAll() {
       refreshBtn.disabled = true;
-      scrapeBtn.disabled = true;
       try {
         await Promise.all([loadAccounts(), loadStatus()]);
       } finally {
         refreshBtn.disabled = false;
-        scrapeBtn.disabled = false;
       }
     }
 
     async function scrapeAll() {
       statusEl.textContent = 'Refreshing… this opens the browser and updates each account.';
-      scrapeBtn.disabled = true;
       refreshBtn.disabled = true;
       try {
         const res = await fetch('/api/refresh?ts=' + Date.now(), { method: 'POST' });
@@ -516,7 +536,6 @@
       } catch (e) {
         statusEl.innerHTML = `<span class="err">Refresh failed:</span> ${e.message}`;
       } finally {
-        scrapeBtn.disabled = false;
         refreshBtn.disabled = false;
       }
     }
@@ -524,6 +543,7 @@
     function startTimers() {
       if (refreshTimer) clearInterval(refreshTimer);
       if (countdownTimer) clearInterval(countdownTimer);
+      if (serverPollTimer) clearInterval(serverPollTimer);
       countdown = intervalMs / 1000;
       countdownEl.textContent = `${countdown}s`;
       refreshTimer = setInterval(() => {
@@ -535,10 +555,13 @@
         if (countdown <= 0) countdown = intervalMs / 1000;
         countdownEl.textContent = `${countdown}s`;
       }, 1000);
+      // Poll server status every 10s to detect new scrapes and server liveness
+      serverPollTimer = setInterval(() => {
+        loadStatus();
+      }, 10000);
     }
 
-    refreshBtn.addEventListener('click', refreshAll);
-    scrapeBtn.addEventListener('click', scrapeAll);
+    refreshBtn.addEventListener('click', scrapeAll);
     addGitHubBtn.addEventListener('click', () => void startAddAccount('github'));
     addGoogleBtn.addEventListener('click', () => void startAddAccount('google'));
     refreshAll();

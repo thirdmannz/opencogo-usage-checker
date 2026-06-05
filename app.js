@@ -21,6 +21,18 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 
+// ── Crash safety ─────────────────────────────────────────────
+process.on('unhandledRejection', (reason, promise) => {
+  console.error(`[safety] UNHANDLED REJECTION: ${reason?.message || reason}`);
+  console.error(reason?.stack || '(no stack)');
+  // Don't exit — log and let the server continue
+});
+process.on('uncaughtException', (err) => {
+  console.error(`[safety] UNCAUGHT EXCEPTION: ${err.message}`);
+  console.error(err.stack);
+  // Don't exit — log and let the server continue
+});
+
 function waitMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -98,20 +110,20 @@ function parseGoLimitText(body) {
 }
 
 function listHeadlessChromePids() {
+  const patterns = ['chrome-headless-shell.exe', 'chrome.exe'];
+  const pids = new Set();
   try {
-    const result = spawnSync('tasklist.exe', ['/FI', 'IMAGENAME eq chrome-headless-shell.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
-    if (result.status !== 0 || !result.stdout || /No tasks are running/i.test(result.stdout)) return [];
-    return result.stdout.split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map(line => {
-        const match = line.match(/^"[^"]+","(\d+)"/);
-        return match ? match[1] : null;
-      })
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+    for (const pattern of patterns) {
+      const result = spawnSync('tasklist.exe', ['/FI', `IMAGENAME eq ${pattern}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
+      if (result.status === 0 && result.stdout && !/No tasks are running/i.test(result.stdout)) {
+        for (const line of result.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean)) {
+          const match = line.match(/^"[^"]+","(\d+)"/);
+          if (match) pids.add(match[1]);
+        }
+      }
+    }
+  } catch {}
+  return [...pids];
 }
 
 function killNewHeadlessChromePids(existingPids) {
@@ -387,6 +399,9 @@ const AUTO_SCRAPE_MS = 60_000;
 
 if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// Kill any orphaned headless Chrome PIDs from a previous crash
+killNewHeadlessChromePids([]);
 
 // ── Account helpers ─────────────────────────────────────────────
 function profileDir(name) { return path.join(SESSION_DIR, name); }
@@ -920,6 +935,8 @@ async function scrapeAccount(name) {
 }
 
 async function scrapeAllAccounts() {
+  // Clean orphaned headless Chrome PIDs before launching new ones
+  const beforePids = listHeadlessChromePids();
   const names = listAccounts();
   const results = [];
   for (const name of names) {
@@ -928,9 +945,24 @@ async function scrapeAllAccounts() {
     } catch (err) {
       results.push({ name, error: err.message, scrapedAt: new Date().toISOString() });
     }
+    // Delay between accounts to reduce memory pressure
+    await waitMs(2000);
+    // Hint GC after each account scrape
+    if (typeof global.gc === 'function') {
+      try { global.gc(); } catch {}
+    }
   }
   lastAutoScrapeAt = new Date().toISOString();
   lastAutoScrapeResult = results;
+  // Clean orphaned Chrome PIDs that were spawned during scraping
+  killNewHeadlessChromePids(beforePids);
+  // Final GC hint after all accounts are done
+  if (typeof global.gc === 'function') {
+    try { global.gc(); } catch {}
+  }
+  // Log current memory usage for diagnostics
+  const mem = process.memoryUsage();
+  console.log(`[memory] rss=${Math.round(mem.rss / 1024 / 1024)}MB heap=${Math.round(mem.heapUsed / 1024 / 1024)}/${Math.round(mem.heapTotal / 1024 / 1024)}MB ext=${Math.round(mem.external / 1024 / 1024)}MB`);
   return results;
 }
 
