@@ -291,7 +291,10 @@ async function verifyLoggedInProfile(profileDir) {
 
     const page = context.pages()[0] || await context.newPage();
     await page.goto('https://opencode.ai/auth', { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(2000);
+    const vWaited = await safeWait(page, 2000);
+    if (!vWaited) {
+      return { ok: false, error: 'Page closed during verify login check.' };
+    }
 
     // Check for auth cookie on opencode.ai — this is the definitive proof
     const cookies = await context.cookies('https://opencode.ai').catch(() => []);
@@ -773,9 +776,32 @@ async function safePageOp(fn) {
   }
 }
 
+/** Safe wait that returns false if page died, true if waited normally */
+async function safeWait(page, ms) {
+  if (!page || page.isClosed()) return false;
+  const result = await safePageOp(() => page.waitForTimeout(ms));
+  return result !== null;
+}
+
 /** Wait for page to be alive and stable */
 function isPageAlive(page) {
-  return page && !page.isClosed() && page.context() && !page.context().browser()?.isConnected() === false;
+  if (!page || page.isClosed()) return false;
+  if (!page.context()) return false;
+  const browser = page.context().browser();
+  if (!browser || !browser.isConnected()) return false;
+  return true;
+}
+
+/** Attempt scrapeAccount with one auto-retry on page-closed errors */
+async function scrapeAccountWithRetry(name) {
+  const first = await scrapeAccount(name, true);
+  if (first && /(Target page|context.*closed|browser.*closed|Session closed)/i.test(first.error || '')) {
+    console.log(`[scrape] ${name}: page closed on first attempt, retrying once…`);
+    await waitMs(2000);
+    const second = await scrapeAccount(name, true);
+    return second;
+  }
+  return first;
 }
 
 async function scrapeAccount(name, _isRetry = false) {
@@ -804,12 +830,15 @@ async function scrapeAccount(name, _isRetry = false) {
       activeScrapeContexts.set(key, context);
 
       const rootPage = await context.newPage();
-      await rootPage.goto('https://opencode.ai/go', { waitUntil: 'load', timeout: 20000 }).catch(() => {});
-      // Page may have been redirected to login or closed after goto
+      await rootPage.goto('https://opencode.ai/go', { waitUntil: 'load', timeout: 30000 }).catch(() => {});
+      // Page may have been redirected to login or closed after navigation
       if (rootPage.isClosed()) {
         return { name, error: 'Page closed after navigation — session may be expired. Re-login: node app.js add ' + name, scrapedAt: new Date().toISOString() };
       }
-      await rootPage.waitForTimeout(1500);
+      const waited = await safeWait(rootPage, 1500);
+      if (!waited) {
+        return { name, error: 'Page closed during settle after navigation.', scrapedAt: new Date().toISOString() };
+      }
 
       const cookies = await context.cookies('https://opencode.ai').catch(() => []);
       const authCookie = cookies.find(c => c.name === 'auth' && c.domain.includes('opencode.ai'));
@@ -860,7 +889,10 @@ async function scrapeAccount(name, _isRetry = false) {
         if (navOk === null) {
           return { name, error: 'Browser closed while navigating to Go page — session may be expired. Re-login.', scrapedAt: new Date().toISOString() };
         }
-        await safePageOp(() => page.waitForTimeout(1500));
+        const settled = await safeWait(page, 1500);
+        if (!settled) {
+          return { name, error: 'Page closed after Go page navigation.', scrapedAt: new Date().toISOString() };
+        }
         goUrlFinal = page.isClosed() ? null : page.url();
         const goText = await page.locator('body').innerText().catch(() => '');
         goLimits = parseGoLimitText(goText);
@@ -869,13 +901,13 @@ async function scrapeAccount(name, _isRetry = false) {
       if (rootPage.isClosed()) {
         return { name, error: 'Page closed after Go page — browser may have crashed. Re-login.', scrapedAt: new Date().toISOString() };
       }
-      await page.goto(workspaceUrl, { waitUntil: 'load', timeout: 20000 }).catch(() => {});
-      if (page.isClosed()) {
+      await safePageOp(() => page.goto(workspaceUrl, { waitUntil: 'load', timeout: 20000 }));
+      const settled2 = await safeWait(page, 1500);
+      if (!settled2) {
         return { name, error: 'Page closed after navigating to usage page.', scrapedAt: new Date().toISOString() };
       }
-      await page.waitForTimeout(1500);
 
-      const result = await page.evaluate(() => {
+      const evaluateResult = await safePageOp(() => page.evaluate(() => {
         const body = document.body ? document.body.innerText : '';
         const data = {};
         const totalBalance = body.match(/Current balance\s+\$([\d,.]+)/i);
@@ -956,7 +988,11 @@ async function scrapeAccount(name, _isRetry = false) {
         data._timestamp = new Date().toISOString();
         data._workspace = Array.from(document.querySelectorAll('a[href*="/workspace/"]')).map(a => a.href).find(Boolean) || null;
         return data;
-      });
+      }));
+
+      if (evaluateResult === null) {
+        return { name, error: 'Page closed while extracting data.', scrapedAt: new Date().toISOString() };
+      }
 
       const output = {
         name,
@@ -964,8 +1000,8 @@ async function scrapeAccount(name, _isRetry = false) {
         workspaceUrl,
         goUrl: goUrlFinal || goUrl,
         goLimits,
-        ...result,
-        provider: normalizeProvider(existingProvider || result.provider, name),
+        ...evaluateResult,
+        provider: normalizeProvider(existingProvider || evaluateResult.provider, name),
       };
       saveAccountData(name, output);
       return output;
@@ -1004,7 +1040,7 @@ async function scrapeAllAccounts() {
   }, 5 * 60 * 1000);
 
   try {
-    const ACCOUNT_TIMEOUT_MS = 30_000; // 30s per account max
+    const ACCOUNT_TIMEOUT_MS = 45_000; // 45s per account max (Google OAuth redirects can be slow)
 
     for (const name of names) {
       console.log(`[scrapeAllAccounts] starting account: ${name}`);
@@ -1014,17 +1050,17 @@ async function scrapeAllAccounts() {
         // Instead, just returns timeout error and moves on
         let timer;
         const result = await Promise.race([
-          scrapeAccount(name)
+          scrapeAccountWithRetry(name)
             .finally(() => clearTimeout(timer))
             .finally(() => { closeActiveAccountBrowser(name).catch(() => {}); }),
           new Promise(resolve => {
             timer = setTimeout(() => {
-              console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
-              const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
-              saveAccountData(name, errResult);
-              // Force-kill orphaned Chrome — don't wait for Playwright APIs
-              killNewHeadlessChromePids([]);
-              resolve(errResult);
+            console.log(`[scrape] ${name}: timed out after ${ACCOUNT_TIMEOUT_MS/1000}s`);
+            const errResult = { name, error: `Scrape timed out (>${ACCOUNT_TIMEOUT_MS/1000}s)`, scrapedAt: new Date().toISOString() };
+            saveAccountData(name, errResult);
+            // Don't kill all Chromes here — the retry's browser may still be launching.
+            // Overall cycle cleanup runs in the finally block at the end of scrapeAllAccounts.
+            resolve(errResult);
             }, ACCOUNT_TIMEOUT_MS);
           }),
         ]);

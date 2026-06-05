@@ -502,6 +502,7 @@
     });
     es.addEventListener('scrape-complete', () => {
       loadAccounts();
+      countdown = 60;
       btnDone();
     });
     es.addEventListener('add-complete', () => { loadAccounts(); });
@@ -571,13 +572,11 @@
     countdown = 60;
     countdownValue.textContent = `${countdown}s`;
     // Auto data poll every 10s — shows latest saved data without triggering a scrape
-    refreshTimer = setInterval(() => {
-      loadAccounts();
+    refreshTimer = setInterval(async () => {
+      smartRefresh();
       loadStatus();
-      countdown = Math.max(0, countdown - 10);
-      countdownValue.textContent = `${countdown}s`;
     }, 10000);
-    // Countdown display (every second)
+    // Countdown display (every second) — resets when auto-scrape fires
     countdownTimer = setInterval(() => {
       countdown = Math.max(0, countdown - 1);
       countdownValue.textContent = `${countdown}s`;
