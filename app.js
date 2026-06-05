@@ -999,11 +999,12 @@ async function scrapeAllAccounts() {
     if (!done) {
       console.error('[scrapeAllAccounts] OVERALL TIMEOUT after 5min — force-returning');
       killNewHeadlessChromePids([]);
+      lastAutoScrapeAt = lastAutoScrapeAt || new Date().toISOString();
     }
   }, 5 * 60 * 1000);
 
   try {
-    const ACCOUNT_TIMEOUT_MS = 60_000; // 60s per account max
+    const ACCOUNT_TIMEOUT_MS = 30_000; // 30s per account max
 
     for (const name of names) {
       try {
