@@ -173,7 +173,7 @@
       .acct-row { grid-template-columns: 180px 1fr; padding: 14px 18px; gap: 12px; }
     }
     @media (min-width: 900px) {
-      .acct-row { grid-template-columns: 200px 140px 1fr 80px; }
+      .acct-row { grid-template-columns: 200px auto 1fr; gap: 14px; }
     }
 
     .acct-row-header {
@@ -219,7 +219,8 @@
     .acct-right-block {
       display: flex; align-items: center; gap: 12px;
     }
-    @media (min-width: 900px) { .acct-right-block { display: contents; } }
+    /* right-block stays flex even on desktop — status + delete as a row */
+    @media (min-width: 900px) { .acct-right-block { display: flex; } }
 
     /* status column */
     .acct-status { display: grid; gap: 2px; }
@@ -368,7 +369,6 @@
       <span>Account</span>
       <span>Status</span>
       <span>Usage</span>
-      <span></span>
     </div>
     <div id="acctRows"></div>
   </div>

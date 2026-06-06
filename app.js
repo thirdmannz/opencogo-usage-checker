@@ -127,7 +127,8 @@ function listHeadlessChromePids() {
 }
 
 function killNewHeadlessChromePids(existingPids) {
-  const before = new Set((existingPids || []).map(String));
+  if (!existingPids || existingPids.length === 0) return; // never kill ALL chrome — only known orphans
+  const before = new Set(existingPids.map(String));
   for (const pid of listHeadlessChromePids()) {
     if (before.has(String(pid))) continue;
     try { spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' }); } catch {}
