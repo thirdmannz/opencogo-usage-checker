@@ -25,6 +25,7 @@ const NODE_OPTS = [
 
 let restartCount = 0;
 let healthTimer = null;
+let healthFailCount = 0;
 let isShuttingDown = false;
 
 // ── Health check ─────────────────────────────────────────────
@@ -81,7 +82,6 @@ function start() {
   });
 
   const startedAt = Date.now();
-  let healthFailCount = 0;
   console.log(`[bg] started PID ${child.pid} on port ${PORT}`);
 
   // Start health checks after a brief grace period for first scrape

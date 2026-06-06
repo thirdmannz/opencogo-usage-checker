@@ -109,30 +109,48 @@ function parseGoLimitText(body) {
   return limits;
 }
 
-function listHeadlessChromePids() {
-  const patterns = ['chrome-headless-shell.exe', 'chrome.exe'];
-  const pids = new Set();
-  try {
-    for (const pattern of patterns) {
-      const result = spawnSync('tasklist.exe', ['/FI', `IMAGENAME eq ${pattern}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
-      if (result.status === 0 && result.stdout && !/No tasks are running/i.test(result.stdout)) {
-        for (const line of result.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean)) {
-          const match = line.match(/^"[^"]+","(\d+)"/);
-          if (match) pids.add(match[1]);
-        }
-      }
-    }
-  } catch {}
-  return [...pids];
+function chromeOwnershipFlag(kind, name = '') {
+  const suffix = name ? `:${String(name).replace(/[^a-z0-9._-]/gi, '_')}` : '';
+  return `--ocwrapper-owned=${kind}${suffix}`;
 }
 
-function killNewHeadlessChromePids(existingPids) {
-  if (!existingPids || existingPids.length === 0) return; // never kill ALL chrome — only known orphans
-  const before = new Set(existingPids.map(String));
-  for (const pid of listHeadlessChromePids()) {
-    if (before.has(String(pid))) continue;
-    try { spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' }); } catch {}
+function listOwnedChromeProcesses(kind = null, name = null) {
+  const ps = "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('chrome.exe','chrome-headless-shell.exe') } | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Depth 3 -Compress";
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0) return [];
+    const raw = String(result.stdout || '').trim();
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    return rows.map(row => ({
+      pid: String(row?.ProcessId || ''),
+      name: String(row?.Name || ''),
+      cmd: String(row?.CommandLine || ''),
+    })).filter(row => {
+      if (!row.pid) return false;
+      const ownerMatch = row.cmd.match(/--ocwrapper-owned=([^\s]+)/i);
+      if (!ownerMatch) return false;
+      const owner = ownerMatch[1].toLowerCase();
+      if (!kind) return true;
+      const kindKey = String(kind).toLowerCase();
+      if (!owner.startsWith(kindKey)) return false;
+      if (name == null) return true;
+      const safeName = String(name).replace(/[^a-z0-9._-]/gi, '_').toLowerCase();
+      return owner === `${kindKey}:${safeName}`;
+    });
+  } catch {
+    return [];
   }
+}
+
+function killOwnedChromeProcesses(kind = null, name = null, reason = 'cleanup') {
+  const procs = listOwnedChromeProcesses(kind, name);
+  for (const proc of procs) {
+    console.log(`[chrome-cleanup] ${reason}: killing ${proc.name} PID ${proc.pid}`);
+    try { spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(proc.pid)], { windowsHide: true, stdio: 'ignore' }); } catch {}
+  }
+  return procs.length;
 }
 
 function firstExistingPath(paths) {
@@ -184,7 +202,7 @@ async function getFreePort() {
   });
 }
 
-async function launchSystemBrowser(loginUrl, userDataDir) {
+async function launchSystemBrowser(loginUrl, userDataDir, ownedName = '') {
   const executable = findBrowserExecutable();
   if (!executable) {
     throw new Error('找不到系統 Chrome/Edge。請安裝 Chrome，或設定 OPENCODE_BROWSER_PATH。');
@@ -201,6 +219,7 @@ async function launchSystemBrowser(loginUrl, userDataDir) {
     '--disable-background-networking',
     '--disable-popup-blocking',
     '--start-maximized',
+    chromeOwnershipFlag('login', ownedName),
     `--user-data-dir=${userDataDir}`,
     '--new-window',
     loginUrl,
@@ -229,7 +248,7 @@ async function connectOverCdpWithRetry(port, timeoutMs = 30000) {
   throw new Error(`無法連上系統瀏覽器的 CDP 埠 ${port}: ${lastErr?.message || 'unknown error'}`);
 }
 
-async function launchManualBrowser(loginUrl, userDataDir) {
+async function launchManualBrowser(loginUrl, userDataDir, ownedName = '') {
   const executable = findBrowserExecutable();
   if (!executable) {
     throw new Error('找不到系統 Chrome/Edge。請安裝 Chrome，或設定 OPENCODE_BROWSER_PATH。');
@@ -242,6 +261,7 @@ async function launchManualBrowser(loginUrl, userDataDir) {
     '--disable-background-networking',
     '--disable-popup-blocking',
     '--start-maximized',
+    chromeOwnershipFlag('manual', ownedName),
     `--user-data-dir=${userDataDir}`,
     '--new-window',
     loginUrl,
@@ -287,7 +307,7 @@ async function verifyLoggedInProfile(profileDir) {
     context = await chromium.launchPersistentContext(profileDir, {
       headless: true,
       viewport: { width: 1280, height: 800 },
-      args: ['--disable-blink-features=AutomationControlled'],
+      args: ['--disable-blink-features=AutomationControlled', chromeOwnershipFlag('verify', path.basename(profileDir))],
     });
 
     const page = context.pages()[0] || await context.newPage();
@@ -405,7 +425,7 @@ if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // Kill any orphaned headless Chrome PIDs from a previous crash
-killNewHeadlessChromePids([]);
+killOwnedChromeProcesses(null, null, 'startup cleanup');
 
 // ── Account helpers ─────────────────────────────────────────────
 function profileDir(name) { return path.join(SESSION_DIR, name); }
@@ -577,7 +597,7 @@ async function runLoginFlow(name, provider = 'github', { returnStateOnly = false
   console.log(`[add] Log in via Google/GitHub. Session saves automatically.\n`);
 
   // Open Chrome WITH remote debugging port so we can poll cookies via CDP
-  const browserRun = await launchSystemBrowser(authUrl, tempProfileDir);
+  const browserRun = await launchSystemBrowser(authUrl, tempProfileDir, name);
   console.log(`[add] Browser: ${browserRun.executable} (CDP: ${browserRun.port})`);
 
   // Give Chrome a moment to start CDP
@@ -857,7 +877,7 @@ async function scrapeAccount(name, _isRetry = false, signal) {
       const storageStateFile = sessionStateFile(name);
       browser = await abortable(chromium.launch({
         headless: true,
-        args: ['--disable-blink-features=AutomationControlled', '--disable-gpu'],
+        args: ['--disable-blink-features=AutomationControlled', '--disable-gpu', chromeOwnershipFlag('scrape', name)],
       }), signal, 'launch browser');
       context = await abortable(browser.newContext({
         storageState: storageStateFile,
@@ -1072,7 +1092,7 @@ async function scrapeAllAccounts(signal) {
   const overallTimer = setTimeout(() => {
     if (!done) {
       console.error('[scrapeAllAccounts] OVERALL TIMEOUT after 10min — force-returning');
-      killNewHeadlessChromePids([]);
+      killOwnedChromeProcesses(null, null, 'overall timeout');
       lastAutoScrapeAt = new Date().toISOString();
     }
   }, 10 * 60 * 1000);
@@ -1088,7 +1108,7 @@ async function scrapeAllAccounts(signal) {
       }
       console.log(`[scrapeAllAccounts] starting account: ${name}`);
       // Pre-cleanup: kill any orphaned Chrome from prior aborted timeouts
-      killNewHeadlessChromePids([]);
+      killOwnedChromeProcesses('scrape', name, 'pre-account cleanup');
       try {
           // Per-account abort: when timeout fires, the signal aborts the running scrape
           const accountAbortController = new AbortController();
@@ -1098,7 +1118,7 @@ async function scrapeAllAccounts(signal) {
             accountAbortController.abort();
             // Kill orphaned browser — prevents Chrome process accumulation
             closeActiveAccountBrowser(name).catch(() => {});
-            killNewHeadlessChromePids([]);
+            killOwnedChromeProcesses('scrape', name, 'account timeout');
           }, ACCOUNT_TIMEOUT_MS);
 
           let result;
@@ -1138,7 +1158,7 @@ async function scrapeAllAccounts(signal) {
     lastAutoScrapeAt = new Date().toISOString();
     lastAutoScrapeResult = results;
     sseSend('scrape-complete', { at: lastAutoScrapeAt, count: results.length, results });
-    killNewHeadlessChromePids([]);
+    killOwnedChromeProcesses(null, null, 'cycle cleanup');
     if (typeof global.gc === 'function') { try { global.gc(); } catch {} }
     const mem = process.memoryUsage();
     console.log(`[memory] rss=${Math.round(mem.rss / 1024 / 1024)}MB heap=${Math.round(mem.heapUsed / 1024 / 1024)}/${Math.round(mem.heapTotal / 1024 / 1024)}MB ext=${Math.round(mem.external / 1024 / 1024)}MB`);
@@ -1161,7 +1181,7 @@ function startAutoScrape() {
           scrapeAbortController.abort();
           scrapeAbortController = null;
         }
-        killNewHeadlessChromePids([]);
+        killOwnedChromeProcesses(null, null, 'safety reset');
         autoScrapeRunning = false;
       } else {
         return;
