@@ -619,7 +619,7 @@
       btnDone();
     });
     es.addEventListener('add-complete', () => { loadAccounts(); });
-    es.addEventListener('reward-applied', () => { loadAccounts(); });
+    es.addEventListener('reward-applied', () => { loadAccounts(); loadStatus(); });
     es.onerror = () => {
       sseDot.className = 'sse-dot connecting';
       sseLabel.textContent = 'Reconnecting';
@@ -826,11 +826,10 @@
         btnEl.classList.add('btn-reward-done');
         btnEl.textContent = '✓ Applied';
         stEl.textContent = p.message || `Reward applied for ${name}`;
-        // Reload accounts to show updated usage + reward count
-        setTimeout(() => {
-          loadAccounts();
-          loadStatus();
-        }, 1500);
+        // Reload immediately (re-scrape already completed server-side) + safety net
+        loadAccounts();
+        loadStatus();
+        setTimeout(() => { loadAccounts(); loadStatus(); }, 3000);
       } else {
         btnEl.classList.remove('btn-reward-spinner');
         btnEl.disabled = false;

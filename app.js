@@ -1323,15 +1323,30 @@ async function applyReward(name) {
       return all.filter(el => /view\s*reward/i.test(el.textContent.trim())).length;
     }).catch(() => 0);
 
-    // Close browser before re-scrape
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
+    // Close browser — we're done with the reward page
+    await closeContextSafe(context);
+    await closeBrowserSafe(browser);
     context = null;
     browser = null;
 
-    // Re-scrape the account to update usage + reward count
-    const scrapeResult = await scrapeAccount(name, false, null);
-    const newRewards = scrapeResult ? scrapeResult.rewardsAvailable : null;
+    // Immediately update data file so dashboard shows new reward count instantly
+    const newRewards = remainingRewards;
+    try {
+      if (fs.existsSync(dataFile(name))) {
+        const existing = JSON.parse(fs.readFileSync(dataFile(name), 'utf8'));
+        existing.rewardsAvailable = newRewards;
+        existing.scrapedAt = new Date().toISOString();
+        saveAccountData(name, existing);
+        console.log(`[reward] ${name}: updated data file rewardsAvailable=${newRewards}`);
+      }
+    } catch (e) {
+      console.warn(`[reward] ${name}: failed to patch data file: ${e.message}`);
+    }
+
+    // Fire background re-scrape (non-blocking) — updates full usage data on next cycle
+    scrapeAccount(name, true, null).catch(err => {
+      console.warn(`[reward] ${name}: background re-scrape failed: ${err.message}`);
+    });
 
     return {
       ok: true,
