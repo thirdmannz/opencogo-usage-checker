@@ -5,3 +5,7 @@ data/
 key.pem
 cert.pem
 .bak
+
+.gittoken
+*.pem.bak
+push.ps1
