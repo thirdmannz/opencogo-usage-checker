@@ -277,6 +277,44 @@
     }
     .usage-pill strong { color: var(--text); font-weight: 600; }
 
+    /* ── Reward section ─────────────────── */
+    .reward-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      background: rgba(241,196,15,0.06);
+      border: 1px solid rgba(241,196,15,0.2);
+      border-radius: var(--radius-sm);
+      margin-top: 6px;
+    }
+    .reward-icon { font-size: 16px; flex: none; }
+    .reward-info { font-size: 12px; color: var(--yellow); font-weight: 600; flex: 1; }
+    .btn-reward {
+      padding: 5px 14px; border-radius: 999px;
+      border: 1px solid var(--yellow); background: rgba(241,196,15,0.12);
+      color: var(--yellow); font-size: 12px; font-weight: 650;
+      cursor: pointer; transition: all 0.18s ease;
+      white-space: nowrap; min-height: 28px;
+    }
+    .btn-reward:hover { background: var(--yellow); color: #000; }
+    .btn-reward:active { transform: scale(0.96); }
+    .btn-reward:disabled { opacity: 0.5; pointer-events: none; }
+    .btn-reward.btn-reward-spinner {
+      color: transparent !important; pointer-events: none !important;
+      position: relative;
+    }
+    .btn-reward.btn-reward-spinner::after {
+      content: '';
+      position: absolute; width: 14px; height: 14px;
+      top: 50%; left: 50%; margin: -7px 0 0 -7px;
+      border: 2px solid rgba(241,196,15,0.3);
+      border-top-color: var(--yellow); border-radius: 50%;
+      animation: rot 0.55s linear infinite;
+    }
+    .btn-reward.btn-reward-done {
+      background: var(--green) !important; border-color: transparent !important;
+      color: #fff !important;
+    }
+
     /* delete */
     .btn-del {
       font-size: 12px; font-weight: 600; padding: 6px 12px;
@@ -453,9 +491,10 @@
     const latest = accounts.map(a => a.scrapedAt).filter(Boolean).sort().reverse()[0];
     const gs = accounts.filter(a => String(a.provider||'github').toLowerCase() === 'github').length;
     const gl = n - gs;
+    const totalRewards = accounts.reduce((s, a) => s + (parseInt(a.rewardsAvailable)||0), 0);
 
     statAccounts.textContent = n;
-    statAccountsSub.textContent = `${gs} GitHub · ${gl} Google` + (latest ? ` · updated ${ago(latest)} ago` : '');
+    statAccountsSub.textContent = `${gs} GitHub · ${gl} Google` + (totalRewards > 0 ? ` · ${totalRewards} reward${totalRewards>1?'s':''} 🎁` : '') + (latest ? ` · updated ${ago(latest)} ago` : '');
 
     if (errs) {
       statHealth.textContent = `${ok}/${n}`;
@@ -500,6 +539,18 @@
     return `<div class="acct-status"><div class="acct-status-line ok"><span class="acct-dot ok"></span>OK</div><div class="acct-status-sub">${ago(a.scrapedAt)} ago</div></div>`;
   }
 
+  // ── Reward helper ──────────────────────────
+  function renderReward(account) {
+    const r = parseInt(account.rewardsAvailable) || 0;
+    if (r <= 0) return '';
+    return `
+      <div class="reward-row" data-reward-for="${txt(account.name)}">
+        <span class="reward-icon">🎁</span>
+        <span class="reward-info">${r} reward${r > 1 ? 's' : ''} available — reduces usage</span>
+        <button class="btn-reward" data-apply-reward="${txt(account.name)}">Apply</button>
+      </div>`;
+  }
+
   // ── Render rows ─────────────────────────────
   function renderRows(accounts) {
     const hasPrev = acctRows.children.length > 0;
@@ -520,6 +571,7 @@
           </div>
           <div class="acct-usage">
             ${renderUsage(a)}
+            ${renderReward(a)}
             <div class="usage-meta">
               <span class="usage-pill">Cost <strong>${cost}</strong></span>
             </div>
@@ -536,6 +588,11 @@
 
     acctRows.querySelectorAll('[data-del]').forEach(btn => {
       btn.addEventListener('click', () => delAccount(btn.dataset.del));
+    });
+
+    // Bind reward apply buttons
+    acctRows.querySelectorAll('[data-apply-reward]').forEach(btn => {
+      btn.addEventListener('click', () => applyReward(btn.dataset.applyReward, btn));
     });
   }
 
@@ -562,6 +619,7 @@
       btnDone();
     });
     es.addEventListener('add-complete', () => { loadAccounts(); });
+    es.addEventListener('reward-applied', () => { loadAccounts(); });
     es.onerror = () => {
       sseDot.className = 'sse-dot connecting';
       sseLabel.textContent = 'Reconnecting';
@@ -744,6 +802,47 @@
     if (!r.ok) { loginHint.textContent = p.error||'Failed'; return; }
     pollAddDone();
     loadAccounts();
+  }
+
+  // ── Apply Reward ─────────────────────────
+  async function applyReward(name, btnEl) {
+    if (!confirm(`Apply reward for "${name}"?\nThis reduces your usage.`)) return;
+    btnEl.disabled = true;
+    btnEl.classList.add('btn-reward-spinner');
+    btnEl.textContent = 'Applying…';
+
+    try {
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 120000);
+      const r = await fetch(`/api/rewards/${encodeURIComponent(name)}/apply`, {
+        method: 'POST',
+        signal: ctrl.signal,
+      });
+      clearTimeout(timeout);
+      const p = await r.json();
+
+      if (p.ok) {
+        btnEl.classList.remove('btn-reward-spinner');
+        btnEl.classList.add('btn-reward-done');
+        btnEl.textContent = '✓ Applied';
+        stEl.textContent = p.message || `Reward applied for ${name}`;
+        // Reload accounts to show updated usage + reward count
+        setTimeout(() => {
+          loadAccounts();
+          loadStatus();
+        }, 1500);
+      } else {
+        btnEl.classList.remove('btn-reward-spinner');
+        btnEl.disabled = false;
+        btnEl.textContent = 'Apply';
+        stEl.innerHTML = `<span class="err">Apply failed: ${p.error || 'Unknown error'}</span>`;
+      }
+    } catch (e) {
+      btnEl.classList.remove('btn-reward-spinner');
+      btnEl.disabled = false;
+      btnEl.textContent = 'Apply';
+      stEl.innerHTML = `<span class="err">Apply error: ${e.message}</span>`;
+    }
   }
 
   // ── Init ────────────────────────────────────

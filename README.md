@@ -15,6 +15,8 @@ Local dashboard that reads your saved OpenCode Go sessions and shows current usa
 - **LAN accessible** — server binds to `:::3333` (all IPv4 + IPv6 interfaces)
 - **HTTPS** — self-signed cert included, works on localhost and LAN
 - **Usage display** — shows Rolling, Weekly, Monthly usage percentages with color coding (green < 70%, yellow 70-90%, red > 90%)
+- **Reward detection** — scans Go page for sign-up reward buttons, shows count per account on dashboard
+- **Apply rewards** — one-click apply sign-up rewards from dashboard; automatically re-scrapes usage after applying
 
 ## Quick Start
 
@@ -87,6 +89,8 @@ The dashboard polls `/api/status` every 10 seconds. If the server goes offline a
 | `/api/accounts/:name` | DELETE | Delete account |
 | `/api/scrape/:name` | POST | Scrape single account |
 | `/api/scrape-all` | POST | Scrape all accounts |
+| `/api/rewards/:name` | GET | Get reward count for account |
+| `/api/rewards/:name/apply` | POST | Apply one reward (auto re-scrapes after) |
 
 ## Configuration
 

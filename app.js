@@ -37,6 +37,45 @@ function waitMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** Await a promise with a hard timeout — prevents browser.close() hangs from blocking forever */
+function awaitWithTimeout(promise, timeoutMs, label = 'operation') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout: ${label} (${timeoutMs}ms)`)), timeoutMs)),
+  ]).catch(err => {
+    console.warn(`[timeout] ${label}: ${err.message}`);
+    return null;
+  });
+}
+
+/** Close a Playwright browser with timeout — never blocks forever */
+async function closeBrowserSafe(browser, timeoutMs = 10000) {
+  if (!browser) return;
+  try {
+    await awaitWithTimeout(browser.close(), timeoutMs, 'browser.close');
+  } catch {}
+}
+
+/** Close a Playwright context with timeout — never blocks forever */
+async function closeContextSafe(context, timeoutMs = 8000) {
+  if (!context) return;
+  try {
+    await awaitWithTimeout(context.close(), timeoutMs, 'context.close');
+  } catch {}
+}
+
+
+const MEMORY_RSS_LIMIT_MB = Number(process.env.OCWRAPPER_RSS_LIMIT_MB || 1200);
+const MEMORY_WARN_MB = Number(process.env.OCWRAPPER_RSS_WARN_MB || 1000);
+let memoryWatchTimer = null;
+function rssMB() {
+  return Math.round(process.memoryUsage().rss / 1024 / 1024);
+}
+function memoryPressureState() {
+  const rss = rssMB();
+  return { rss, warn: rss >= MEMORY_WARN_MB, hard: rss >= MEMORY_RSS_LIMIT_MB };
+}
+
 function waitMsSignal(ms, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
@@ -107,6 +146,19 @@ function parseGoLimitText(body) {
   }
 
   return limits;
+}
+
+/** Scan Go page for "View Reward" buttons and return reward info */
+function parseGoRewards(body, buttons) {
+  // Count buttons/links whose text contains "view reward" (case-insensitive)
+  const rewardButtons = (buttons || []).filter(t =>
+    /view\s*reward/i.test(t)
+  );
+  // Also detect from body text patterns like "2 rewards available"
+  const bodyMatch = String(body || '').match(/(\d+)\s+rewards?\s+available/i);
+  const fromBody = bodyMatch ? parseInt(bodyMatch[1], 10) : 0;
+  const count = Math.max(rewardButtons.length, fromBody);
+  return { rewardsAvailable: count, rewardButtonTexts: rewardButtons };
 }
 
 function chromeOwnershipFlag(kind, name = '') {
@@ -775,10 +827,9 @@ async function closeActiveAccountBrowser(name) {
   const key = String(name);
   const context = activeScrapeContexts.get(key);
   if (context) {
-    // Get browser FIRST before closing context
     const browser = context.browser();
-    await context.close().catch(() => {});
-    if (browser && browser.isConnected()) await browser.close().catch(() => {});
+    await closeContextSafe(context);
+    if (browser && browser.isConnected()) await closeBrowserSafe(browser);
   }
   activeScrapeContexts.delete(key);
 }
@@ -941,6 +992,7 @@ async function scrapeAccount(name, _isRetry = false, signal) {
       const goUrl = workspaceGoUrl(workspaceUrl);
       let goLimits = [];
       let goUrlFinal = null;
+      let goRewardInfo = { rewardsAvailable: 0, rewardButtonTexts: [] };
       if (goUrl) {
         const navOk = await abortable(safePageOp(() => page.goto(goUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })), signal, 'navigate to go page');
         if (navOk === null) {
@@ -953,6 +1005,14 @@ async function scrapeAccount(name, _isRetry = false, signal) {
         goUrlFinal = page.isClosed() ? null : page.url();
         const goText = await page.locator('body').innerText().catch(() => '');
         goLimits = parseGoLimitText(goText);
+        // Detect View Reward buttons on the Go page
+        const goButtonTexts = await page.evaluate(() => {
+          return Array.from(document.querySelectorAll('button, a, [role=button]'))
+            .map(el => el.textContent.trim())
+            .filter(t => t.length > 0 && t.length < 100);
+        }).catch(() => []);
+        goRewardInfo = parseGoRewards(goText, goButtonTexts);
+        console.log(`[scrape] ${name}: go page rewards=${goRewardInfo.rewardsAvailable} buttons=${JSON.stringify(goRewardInfo.rewardButtonTexts)}`);
       }
 
       if (rootPage.isClosed()) {
@@ -1057,6 +1117,7 @@ async function scrapeAccount(name, _isRetry = false, signal) {
         workspaceUrl,
         goUrl: goUrlFinal || goUrl,
         goLimits,
+        rewardsAvailable: goRewardInfo ? goRewardInfo.rewardsAvailable : 0,
         ...evaluateResult,
         provider: normalizeProvider(existingProvider || evaluateResult.provider, name),
       };
@@ -1068,8 +1129,8 @@ async function scrapeAccount(name, _isRetry = false, signal) {
       return errResult;
     } finally {
       activeScrapeContexts.delete(key);
-      if (context) await context.close().catch(() => {});
-      if (browser) await browser.close().catch(() => {});
+      if (context) await closeContextSafe(context);
+      if (browser) await closeBrowserSafe(browser);
       cleanupAccountArtifacts(name);
     }
   })();
@@ -1166,12 +1227,140 @@ async function scrapeAllAccounts(signal) {
   return results;
 }
 
+/** Apply one sign-up reward for an account.
+ *  Returns { ok, applied, rewardsRemaining, message } */
+async function applyReward(name) {
+  const pdir = profileDir(name);
+  const storageFile = sessionStateFile(name);
+  if (!fs.existsSync(pdir) || !fs.existsSync(storageFile)) {
+    return { ok: false, error: 'Account not found or no session' };
+  }
+
+  let browser;
+  let context;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--disable-blink-features=AutomationControlled', '--disable-gpu', chromeOwnershipFlag('reward', name)],
+    });
+    context = await browser.newContext({
+      storageState: storageFile,
+      viewport: { width: 1280, height: 800 },
+    });
+
+    const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+
+    // Find workspace URL from existing data
+    const existingData = fs.existsSync(dataFile(name))
+      ? JSON.parse(fs.readFileSync(dataFile(name), 'utf8'))
+      : {};
+    const workspaceUrl = existingData.workspaceUrl || existingData._url;
+    const goUrl = workspaceGoUrl(workspaceUrl);
+
+    if (!goUrl) {
+      return { ok: false, error: 'No workspace Go URL found' };
+    }
+
+    // Navigate to Go page
+    await page.goto(goUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await safeWait(page, 2000);
+
+    // Check auth
+    const cookies = await context.cookies('https://opencode.ai').catch(() => []);
+    if (!cookies.find(c => c.name === 'auth' && c.domain.includes('opencode.ai'))) {
+      return { ok: false, error: 'Not authenticated — re-login needed' };
+    }
+
+    // Find "View Reward" button (flexible: button, link, or any clickable element)
+    const viewRewardClicked = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('button, a, [role=button]'));
+      const btn = all.find(el => /view\s*reward/i.test(el.textContent.trim()));
+      if (btn) {
+        btn.click();
+        return btn.textContent.trim();
+      }
+      return null;
+    }).catch(() => null);
+
+    if (!viewRewardClicked) {
+      return { ok: false, error: 'No "View Reward" button found on Go page', rewardsRemaining: 0 };
+    }
+
+    console.log(`[reward] ${name}: clicked "${viewRewardClicked}"`);
+    await safeWait(page, 2000);
+
+    // Find and click "Apply" button
+    const applyClicked = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('button, a, [role=button]'));
+      const btn = all.find(el => {
+        const t = el.textContent.trim().toLowerCase();
+        return t === 'apply' || t === 'apply now' || t === 'apply reward' || /^apply$/i.test(t);
+      });
+      if (btn) {
+        btn.click();
+        return btn.textContent.trim();
+      }
+      return null;
+    }).catch(() => null);
+
+    if (!applyClicked) {
+      return { ok: false, error: 'No "Apply" button found after clicking View Reward', rewardsRemaining: null };
+    }
+
+    console.log(`[reward] ${name}: clicked "Apply" — "${applyClicked}"`);
+    await safeWait(page, 3000);
+
+    // Check for success message
+    const resultText = await page.locator('body').innerText().catch(() => '');
+    const success = /applied|success|claimed|activated/i.test(resultText);
+    const alreadyApplied = /already\s+(applied|claimed|activated)/i.test(resultText);
+    const errorText = resultText.match(/error[:\s]+([^\n.]{10,80})/i);
+
+    // After apply, count remaining rewards on the page
+    const remainingRewards = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('button, a, [role=button]'));
+      return all.filter(el => /view\s*reward/i.test(el.textContent.trim())).length;
+    }).catch(() => 0);
+
+    // Close browser before re-scrape
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+    context = null;
+    browser = null;
+
+    // Re-scrape the account to update usage + reward count
+    const scrapeResult = await scrapeAccount(name, false, null);
+    const newRewards = scrapeResult ? scrapeResult.rewardsAvailable : null;
+
+    return {
+      ok: true,
+      applied: success || !alreadyApplied,
+      message: alreadyApplied ? 'Reward was already applied' : (success ? 'Reward applied successfully' : 'Apply clicked — check dashboard'),
+      error: errorText ? errorText[1] : null,
+      rewardsRemaining: newRewards,
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  } finally {
+    if (context) await closeContextSafe(context);
+    if (browser) await closeBrowserSafe(browser);
+  }
+}
+
 function startAutoScrape() {
   if (autoScrapeTimer) return;
 
   let autoScrapeStartedAt = null;
+  let runSerial = 0;
+
 
   const tick = async () => {
+    const mem = memoryPressureState();
+    if (mem.hard) {
+      console.error(`[auto] RSS ${mem.rss}MB >= limit ${MEMORY_RSS_LIMIT_MB}MB — skip cycle to avoid OOM`);
+      return;
+    }
     if (autoScrapeRunning) {
       // Safety: if autoScrapeRunning for >12 min without completing, abort + force-reset
       // 4 accounts × 120s = 480s, plus delays + buffer → 12 min (720s)
@@ -1189,6 +1378,7 @@ function startAutoScrape() {
     }
     autoScrapeRunning = true;
     autoScrapeStartedAt = Date.now();
+    const myRun = ++runSerial;
     scrapeAbortController = new AbortController();
     const signal = scrapeAbortController.signal;
     try {
@@ -1203,13 +1393,20 @@ function startAutoScrape() {
     } catch (err) {
       console.error(`[auto] refresh failed: ${err.message}`);
     } finally {
+      const after = memoryPressureState();
+      if (after.warn) {
+        console.warn(`[auto] RSS ${after.rss}MB approaching limit ${MEMORY_RSS_LIMIT_MB}MB`);
+      }
       autoScrapeRunning = false;
       if (scrapeAbortController === signal) scrapeAbortController = null;
+      if (myRun === runSerial && typeof global.gc === 'function') {
+        try { global.gc(); } catch {}
+      }
     }
   };
 
   tick();
-  autoScrapeTimer = setInterval(tick, AUTO_SCRAPE_MS);
+  autoScrapeTimer = setInterval(() => { tick().catch(err => console.error(`[auto] tick error: ${err.message}`)); }, AUTO_SCRAPE_MS);
 }
 
 // ── Express server ──────────────────────────────────────────────
@@ -1224,6 +1421,24 @@ function createServer(port) {
     next();
   });
   app.use(express.static(path.join(BASE_DIR, 'public')));
+
+  if (!memoryWatchTimer) {
+    memoryWatchTimer = setInterval(() => {
+      const mem = memoryPressureState();
+      if (mem.hard) {
+        console.error(`[watchdog] RSS ${mem.rss}MB >= ${MEMORY_RSS_LIMIT_MB}MB — stop auto scrape and force GC`);
+        if (scrapeAbortController) {
+          scrapeAbortController.abort();
+          scrapeAbortController = null;
+        }
+        killOwnedChromeProcesses(null, null, 'memory watchdog');
+        autoScrapeRunning = false;
+        if (typeof global.gc === 'function') { try { global.gc(); } catch {} }
+      } else if (mem.warn) {
+        console.warn(`[watchdog] RSS ${mem.rss}MB warning threshold ${MEMORY_WARN_MB}MB`);
+      }
+    }, 60000);
+  }
 
   // SSE event stream — real-time push to the dashboard
   app.get('/api/events', (req, res) => {
@@ -1252,12 +1467,17 @@ function createServer(port) {
   });
 
   app.get('/api/status', (req, res) => {
+    const started = Date.now();
+    const mem = process.memoryUsage();
     res.json({
       autoScrapeRunning,
       lastAutoScrapeAt,
       accountCount: listAccounts().length,
       intervalMs: AUTO_SCRAPE_MS,
+      rssMB: Math.round(mem.rss / 1024 / 1024),
+      heapMB: Math.round(mem.heapUsed / 1024 / 1024),
       lastAutoScrapeResult,
+      statusLatencyMs: Date.now() - started,
     });
   });
 
@@ -1282,6 +1502,38 @@ function createServer(port) {
       res.json(results);
     } catch (err) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get reward info for an account
+  app.get('/api/rewards/:name', (req, res) => {
+    const { name } = req.params;
+    const df = dataFile(name);
+    if (!fs.existsSync(df)) return res.json({ rewardsAvailable: 0 });
+    try {
+      const d = JSON.parse(fs.readFileSync(df, 'utf8'));
+      res.json({ name, rewardsAvailable: d.rewardsAvailable || 0 });
+    } catch {
+      res.json({ rewardsAvailable: 0 });
+    }
+  });
+
+  // Apply a reward for an account
+  let applyRewardRunning = new Set();
+  app.post('/api/rewards/:name/apply', async (req, res) => {
+    const { name } = req.params;
+    if (applyRewardRunning.has(name)) {
+      return res.status(409).json({ ok: false, error: 'Reward apply already in progress for this account' });
+    }
+    applyRewardRunning.add(name);
+    try {
+      const result = await applyReward(name);
+      sseSend('reward-applied', { name, ...result });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    } finally {
+      applyRewardRunning.delete(name);
     }
   });
 
