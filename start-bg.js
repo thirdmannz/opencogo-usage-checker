@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * OpenCode Go — background server launcher with auto-restart + health checks.
+ * OpenCode Go — single-instance watchdog launcher.
  *
  * Spawns the Express server, monitors it via HTTP health checks,
  * and restarts on crash or hang. Use instead of `node app.js server`.
