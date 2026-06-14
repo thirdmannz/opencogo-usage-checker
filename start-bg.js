@@ -28,6 +28,20 @@ let healthTimer = null;
 let healthFailCount = 0;
 let isShuttingDown = false;
 
+function isPortAlreadyUp(port) {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/api/status`, (res) => {
+      res.resume();
+      resolve(res.statusCode >= 200 && res.statusCode < 500);
+    });
+    req.setTimeout(2000, () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on('error', () => resolve(false));
+  });
+}
+
 // ── Health check ─────────────────────────────────────────────
 //
 // Key rules:
@@ -73,7 +87,12 @@ function healthCheck(child) {
 }
 
 // ── Start server ────────────────────────────────────────────
-function start() {
+async function start() {
+  if (await isPortAlreadyUp(PORT)) {
+    console.log(`[bg] ocwrapper already running on port ${PORT}; skipping duplicate start`);
+    return;
+  }
+
   const child = spawn('node', [...NODE_OPTS, 'app.js', 'server', '--port', PORT], {
     cwd: __dirname,
     stdio: ['ignore', 'inherit', 'inherit'],

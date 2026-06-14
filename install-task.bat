@@ -1,45 +1,48 @@
 @echo off
-:: install-task.bat — Register ocwrapper as a Scheduled Task with auto-restart.
-:: Run this once as Admin. The task starts at login and restarts on failure.
-:: 
-:: To remove:  schtasks /Delete /TN "ocwrapper" /F
+setlocal
+set "ROOT=C:\Projects\ocwrapper"
+set "NODE=C:\Program Files\nodejs\node.exe"
+set "SCRIPT=%ROOT%\start-bg.js"
+set "TASK=ocwrapper"
 
-cd /d C:\Projects\ocwrapper
+cd /d "%ROOT%" || (
+  echo Failed to change directory to %ROOT%
+  pause
+  exit /b 1
+)
+
+if not exist "%NODE%" (
+  echo ERROR: Node.js not found at "%NODE%"
+  pause
+  exit /b 1
+)
 
 echo Registering ocwrapper scheduled task...
 
-schtasks /Delete /TN "ocwrapper" /F >nul 2>&1
+schtasks /Delete /TN "%TASK%" /F >nul 2>&1
 
-schtasks /Create ^
-  /TN "ocwrapper" ^
-  /TR "wscript.exe \"C:\Projects\ocwrapper\launch.vbs\"" ^
-  /SC ONLOGON ^
-  /RL HIGHEST ^
-  /F
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference = 'Stop'; ^
+   $action = New-ScheduledTaskAction -Execute '%NODE%' -Argument '--expose-gc --max-old-space-size=1024 \"%SCRIPT%\" --port 3333' -WorkingDirectory '%ROOT%'; ^
+   $trigger = New-ScheduledTaskTrigger -AtLogOn; ^
+   $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; ^
+   Register-ScheduledTask -TaskName '%TASK%' -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null"
 
-if %ERRORLEVEL% NEQ 0 (
+if errorlevel 1 (
   echo FAILED to create task. Run this script as Administrator.
   pause
   exit /b 1
 )
 
 echo.
-echo Task "ocwrapper" registered successfully.
+echo Task "%TASK%" registered successfully.
 echo   - Starts at every login
-echo   - Runs headless (no window)
-echo.
-echo To configure restart-on-failure, open Task Scheduler:
-echo   1. Win+R ^> taskschd.msc
-echo   2. Find "ocwrapper" in Task Scheduler Library
-echo   3. Properties ^> Settings tab:
-echo      [x] Run task as soon as possible after a scheduled start is missed
-echo      [x] If the task fails, restart every: 1 minute
-echo      Attempt to restart: 3 times
-echo      [x] Stop the task if it runs longer than: (leave unchecked)
+echo   - Runs start-bg.js directly via Node.js
+echo   - Restarts on failure up to 3 times, every 1 minute
 echo.
 echo Manual controls:
-echo   Start:   schtasks /Run /TN "ocwrapper"
-echo   Stop:    schtasks /End /TN "ocwrapper"
-echo   Remove:  schtasks /Delete /TN "ocwrapper" /F
-echo   Status:  schtasks /Query /TN "ocwrapper"
+echo   Start:   schtasks /Run /TN "%TASK%"
+echo   Stop:    schtasks /End /TN "%TASK%"
+echo   Remove:  schtasks /Delete /TN "%TASK%" /F
+echo   Status:  schtasks /Query /TN "%TASK%"
 pause

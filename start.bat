@@ -1,12 +1,49 @@
 @echo off
-cd /d C:\Projects\ocwrapper
+setlocal
+set "ROOT=C:\Projects\ocwrapper"
+set "NODE=C:\Program Files\nodejs\node.exe"
+set "PORT=3333"
+set "URL=http://127.0.0.1:%PORT%"
 
-:: Kill any existing ocwrapper processes first
-taskkill /F /FI "IMAGENAME eq node.exe" /FI "WINDOWTITLE eq ocwrapper" >nul 2>&1
-timeout /t 1 >nul
+cd /d "%ROOT%" || (
+  echo Failed to change directory to %ROOT%
+  pause
+  exit /b 1
+)
 
-:: Launch headlessly via VBS (no window to close)
-wscript.exe launch.vbs
+if not exist "%NODE%" (
+  echo ERROR: Node.js not found at "%NODE%"
+  pause
+  exit /b 1
+)
 
-echo OpenCode Go server started on port 3333 (headless, auto-restart via Task Scheduler).
-echo To stop: taskkill /F /FI "WINDOWTITLE eq ocwrapper" /FI "IMAGENAME eq node.exe"
+echo Starting ocwrapper...
+
+curl.exe -fsS "%URL%/api/status" >nul 2>&1
+if %errorlevel%==0 (
+  echo Existing ocwrapper is already running on %URL%
+  echo Opening browser...
+  start "" "%URL%"
+  echo.
+  pause
+  exit /b 0
+)
+
+echo   "%NODE%" --expose-gc --max-old-space-size=1024 "%ROOT%\start-bg.js" --port %PORT%
+echo.
+start "" /min "%NODE%" --expose-gc --max-old-space-size=1024 "%ROOT%\start-bg.js" --port %PORT%
+timeout /t 4 /nobreak >nul
+
+curl.exe -fsS "%URL%/api/status" >nul 2>&1
+if not %errorlevel%==0 (
+  echo ERROR: ocwrapper did not come up on %URL%
+  echo Check the console output for the real error.
+  echo.
+  pause
+  exit /b 1
+)
+
+start "" "%URL%"
+echo Browser opened to %URL%
+echo.
+pause
