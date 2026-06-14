@@ -36,8 +36,8 @@ let isShuttingDown = false;
 //  - allow multiple consecutive failures before killing
 //
 const HEALTH_INTERVAL_MS = Number(process.env.OCWRAPPER_HEALTH_INTERVAL_MS || 30000);
-const HEALTH_TIMEOUT_MS  = Number(process.env.OCWRAPPER_HEALTH_TIMEOUT_MS || 180000);
-const MAX_HEALTH_FAILS   = Number(process.env.OCWRAPPER_MAX_HEALTH_FAILS || 8);
+const HEALTH_TIMEOUT_MS  = Number(process.env.OCWRAPPER_HEALTH_TIMEOUT_MS || 60000);
+const MAX_HEALTH_FAILS   = Number(process.env.OCWRAPPER_MAX_HEALTH_FAILS || 4);
 
 function healthCheck(child) {
   if (healthTimer) clearInterval(healthTimer);
