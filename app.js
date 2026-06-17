@@ -613,29 +613,24 @@ async function findAuthenticatedGoPage(context) {
 async function waitForAuthCallback(page, timeoutMs = 5 * 60 * 1000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await page.waitForTimeout(1000);
+    if (!page || page.isClosed()) return null;
+    const waited = await safeWait(page, 1000);
+    if (!waited) return null;
+    if (page.isClosed()) return null;
+
     const url = page.url();
     if (url.includes('/callback') && url.includes('auth.opencode.ai')) {
       const bodyText = await page.locator('body').innerText().catch(() => '');
       const authMeta = await page.locator('meta[name="opencode:auth"]').getAttribute('content').catch(() => null);
       console.log(`[diag] callback URL: ${url}`);
+      console.log(`[diag] callback authMeta: ${authMeta}`);
       console.log(`[diag] callback body (first 200): ${bodyText.slice(0, 200)}`);
-      console.log(`[diag] opencode:auth meta: ${authMeta}`);
-      // Dump cookies at callback stage
-      const cbCookies = await page.context().cookies('https://auth.opencode.ai').catch(() => []);
-      console.log(`[diag] callback cookies on auth.opencode.ai: ${cbCookies.length}`);
-      cbCookies.forEach(c => console.log(`  ${c.name} = ${c.value.slice(0,30)}... sameSite=${c.sameSite}`));
-      const mainCookies = await page.context().cookies('https://opencode.ai').catch(() => []);
-      console.log(`[diag] callback cookies on opencode.ai: ${mainCookies.length}`);
-      mainCookies.forEach(c => console.log(`  ${c.name} = ${c.value.slice(0,30)}... sameSite=${c.sameSite}`));
-      if (authMeta === 'true') return { ok: true, page };
-      if (!/unknown state|expired|switch(ed)? in the middle/i.test(bodyText)) continue;
-      return { ok: false, error: bodyText.trim() || 'auth callback failed', page };
+      const cookies = await page.context().cookies('https://opencode.ai').catch(() => []);
+      console.log(`[diag] callback cookies: ${cookies.length}`);
+      return { url, bodyText, authMeta, cookies };
     }
-    const authPage = await findAuthenticatedGoPage(page.context());
-    if (authPage) return { ok: true, page: authPage };
   }
-  return { ok: false, error: 'Timeout waiting for auth callback', page };
+  return null;
 }
 
 // ── Browser helpers ─────────────────────────────────────────────
@@ -811,6 +806,7 @@ async function webAddAccount(name, provider = 'github', signal) {
 
 const activeScrapeContexts = new Map();
 const activeScrapePromises = new Map();
+let scrapeCycleStartedAt = null;
 
 function cleanupAccountArtifacts(name) {
   if (!fs.existsSync(SESSION_DIR)) return;
@@ -1435,7 +1431,30 @@ function createServer(port) {
     res.set('Expires', '0');
     next();
   });
+  // ── CORS for API endpoints (Manifest, etc.) ──────────────────────────
+  app.use('/api', (req, res, next) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+
   app.use(express.static(path.join(BASE_DIR, 'public')));
+
+  // ── Health endpoint ──────────────────────────────────
+  app.get('/health', (req, res) => {
+    let blockedMs = 0;
+    if (scrapeCycleStartedAt) blockedMs = Date.now() - scrapeCycleStartedAt.getTime();
+    res.json({
+      status: 'ok',
+      memory_mb: rssMB(),
+      scrape_pending: activeScrapePromises.size,
+      scrape_running: autoScrapeRunning || false,
+      blocked_ms: blockedMs,
+      accounts: listAccounts().length,
+    });
+  });
 
   if (!memoryWatchTimer) {
     memoryWatchTimer = setInterval(() => {
@@ -1611,6 +1630,53 @@ function createServer(port) {
       res.json({ ok: true, deleted: name });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message, deleted: name });
+    }
+  });
+
+  // ── Usage API for external consumers (Manifest, etc.) ───────────────
+  app.get('/api/usage', (req, res) => {
+    const accounts = listAccounts().map(name => {
+      try {
+        const df = dataFile(name);
+        if (!fs.existsSync(df)) return { name, status: 'no-data', limits: {} };
+        const d = JSON.parse(fs.readFileSync(df, 'utf-8'));
+        const limits = {};
+        for (const l of (d.goLimits || [])) {
+          limits[l.key] = { used: l.percentValue, reset: l.reset };
+        }
+        return {
+          name,
+          scrapedAt: d.scrapedAt || null,
+          limits,
+          totalCost: d.totalCost || '0',
+          provider: d.provider || null,
+        };
+      } catch {
+        return { name, status: 'error', limits: {} };
+      }
+    });
+    res.json({ accounts, updatedAt: new Date().toISOString() });
+  });
+
+  app.get('/api/usage/:name', (req, res) => {
+    const name = req.params.name;
+    const df = dataFile(name);
+    if (!fs.existsSync(df)) return res.status(404).json({ error: 'no-data', name });
+    try {
+      const d = JSON.parse(fs.readFileSync(df, 'utf-8'));
+      const limits = {};
+      for (const l of (d.goLimits || [])) {
+        limits[l.key] = { used: l.percentValue, reset: l.reset };
+      }
+      res.json({
+        name,
+        scrapedAt: d.scrapedAt || null,
+        limits,
+        totalCost: d.totalCost || '0',
+        provider: d.provider || null,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message, name });
     }
   });
 
