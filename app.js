@@ -1627,9 +1627,70 @@ function createServer(port) {
       safeRmDir(pdir, name);
       if (fs.existsSync(dfile)) fs.unlinkSync(dfile);
       cleanupAccountArtifacts(name);
+      sseSend('account-list', listAccounts());
+      console.log(`[delete] Removed: ${name}`);
       res.json({ ok: true, deleted: name });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message, deleted: name });
+    }
+  });
+
+  // Rename account
+  app.put('/api/accounts/:name/rename', (req, res) => {
+    const oldName = req.params.name;
+    const { newName } = req.body || {};
+    if (!newName || typeof newName !== 'string' || !newName.trim()) {
+      return res.status(400).json({ ok: false, error: 'newName is required' });
+    }
+    const trimmed = newName.trim();
+    if (trimmed === oldName) {
+      return res.json({ ok: true, name: trimmed, renamed: false, message: 'Name unchanged' });
+    }
+    // Validate name format
+    if (!/^[a-zA-Z0-9._@+-]+$/.test(trimmed)) {
+      return res.status(400).json({ ok: false, error: 'Name can only contain letters, numbers, dots, underscores, @, +, -' });
+    }
+    const oldPdir = profileDir(oldName);
+    const newPdir = profileDir(trimmed);
+    const oldDfile = dataFile(oldName);
+    const newDfile = dataFile(trimmed);
+    try {
+      if (!fs.existsSync(oldPdir) && !fs.existsSync(oldDfile)) {
+        return res.status(404).json({ ok: false, error: `Account "${oldName}" not found` });
+      }
+      // Check new name doesn't already exist
+      if (fs.existsSync(newPdir) || fs.existsSync(newDfile)) {
+        return res.status(409).json({ ok: false, error: `Account "${trimmed}" already exists` });
+      }
+      // Close browser if active for this account
+      if (addAccountState.name === oldName && activeAddContext) {
+        // Can't easily rename during active add, block it
+        return res.status(409).json({ ok: false, error: 'Cannot rename while account is being added' });
+      }
+      closeActiveAccountBrowser(oldName).catch(() => {});
+      // Rename session directory
+      if (fs.existsSync(oldPdir)) {
+        fs.renameSync(oldPdir, newPdir);
+      }
+      // Rename data file
+      if (fs.existsSync(oldDfile)) {
+        fs.renameSync(oldDfile, newDfile);
+      }
+      // Update data file internal name field
+      if (fs.existsSync(newDfile)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(newDfile, 'utf-8'));
+          data.name = trimmed;
+          fs.writeFileSync(newDfile, JSON.stringify(data, null, 2));
+        } catch {}
+      }
+      // Clean up old artifacts
+      cleanupAccountArtifacts(oldName);
+      sseSend('account-list', listAccounts());
+      console.log(`[rename] ${oldName} → ${trimmed}`);
+      res.json({ ok: true, name: trimmed, renamed: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 

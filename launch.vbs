@@ -16,7 +16,7 @@ nodeExe = "C:\Program Files\nodejs\node.exe"
 scriptPath = fso.BuildPath(shell.CurrentDirectory, "start-bg.js")
 url = "http://127.0.0.1:" & port
 
-cmd = "\"" & nodeExe & "\" --expose-gc --max-old-space-size=1024 \"" & scriptPath & "\" --port " & port
+cmd = """" & nodeExe & """ --expose-gc --max-old-space-size=1024 """ & scriptPath & """ --port " & port
 shell.Run cmd, 0, False
 
 Set fso = Nothing

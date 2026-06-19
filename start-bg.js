@@ -2,8 +2,8 @@
 /**
  * OpenCode Go — single-instance watchdog launcher.
  *
- * Spawns the Express server, monitors it via HTTP health checks,
- * and restarts on crash or hang. Use instead of `node app.js server`.
+ * Spawns the Express server, monitors it via HTTP + scrape-thread health
+ * checks, and restarts on crash, hang, or memory exhaustion.
  *
  * Usage:
  *   node start-bg.js              (default port 3333)
@@ -12,139 +12,154 @@
 const { spawn } = require('child_process');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 
 const args = process.argv.slice(2);
 const portIdx = args.indexOf('--port');
 const PORT = portIdx !== -1 ? args[portIdx + 1] : '3333';
 
-const NODE_OPTS = [
-  '--expose-gc',
-  '--max-old-space-size=1024',
-  '--unhandled-rejections=warn',
-];
+const BASE = 'C:\\Projects\\ocwrapper';
+const BG_LOG = path.join(BASE, 'bg.log');
+const HEALTH_INTERVAL = 15000;
+const HEALTH_TIMEOUT = 8000;
+const STOP_TIMEOUT = 10000;
+const RESTART_DELAY = 3000;
+const MAX_FAILURES = 3;
 
-let restartCount = 0;
+// Set process title so it's identifiable — do NOT kill this process
+process.title = 'ocwrapper-guardian';
+
+let child = null;
 let healthTimer = null;
-let healthFailCount = 0;
 let isShuttingDown = false;
+let consecutiveFailures = 0;
 
-function isPortAlreadyUp(port) {
-  return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${port}/api/status`, (res) => {
-      res.resume();
-      resolve(res.statusCode >= 200 && res.statusCode < 500);
-    });
-    req.setTimeout(2000, () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.on('error', () => resolve(false));
-  });
+function log(msg) {
+  const ts = new Date().toISOString();
+  const line = `[bg ${ts}] ${msg}`;
+  console.log(line);
+  try { fs.appendFileSync(BG_LOG, line + '\n'); } catch {}
 }
 
-// ── Health check ─────────────────────────────────────────────
-//
-// Key rules:
-//  - timeout must exceed the longest single scrape stall
-//  - check every 30s
-//  - allow multiple consecutive failures before killing
-//
-const HEALTH_INTERVAL_MS = Number(process.env.OCWRAPPER_HEALTH_INTERVAL_MS || 30000);
-const HEALTH_TIMEOUT_MS  = Number(process.env.OCWRAPPER_HEALTH_TIMEOUT_MS || 60000);
-const MAX_HEALTH_FAILS   = Number(process.env.OCWRAPPER_MAX_HEALTH_FAILS || 4);
+function rss() {
+  try { return Math.round(process.memoryUsage().rss / 1024 / 1024); } catch { return 0; }
+}
 
-function healthCheck(child) {
-  if (healthTimer) clearInterval(healthTimer);
+function healthCheck() {
+  if (!child || child.killed || child.exitCode !== null || isShuttingDown) return;
 
-  healthTimer = setInterval(() => {
-    if (!child || child.killed || child.exitCode !== null || isShuttingDown) {
-      clearInterval(healthTimer);
-      healthTimer = null;
-      return;
-    }
-
-    const req = http.get(`http://127.0.0.1:${PORT}/api/status`, (res) => {
-      res.resume();
-      healthFailCount = 0; // healthy — reset counter
-    });
-    req.setTimeout(HEALTH_TIMEOUT_MS, () => {
-      req.destroy();
-      healthFailCount++;
-      if (healthFailCount >= MAX_HEALTH_FAILS) {
-        console.log(`[bg] health failed ${healthFailCount}x — server unresponsive, killing PID ${child.pid}`);
-        try { process.kill(child.pid, 'SIGKILL'); } catch {}
-        try { require('child_process').spawnSync('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' }); } catch {}
-        healthFailCount = 0;
-      } else {
-        console.log(`[bg] health check failed (${healthFailCount}/${MAX_HEALTH_FAILS}) — waiting`);
+  const start = Date.now();
+  const req = http.get(`http://127.0.0.1:${PORT}/health`, { timeout: HEALTH_TIMEOUT }, (res) => {
+    let body = '';
+    res.on('data', c => body += c);
+    res.on('end', () => {
+      const ms = Date.now() - start;
+      if (res.statusCode !== 200) {
+        log(`health FAIL — HTTP ${res.statusCode} (${ms}ms)`);
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_FAILURES) restartChild();
+        return;
+      }
+      try {
+        const h = JSON.parse(body);
+        consecutiveFailures = 0;
+        if (h.memory_mb > 1100) {
+          log(`memory ${h.memory_mb}MB > 1100 — forcing restart`);
+          return restartChild();
+        }
+        if (h.blocked_ms > 60000) {
+          log(`scrape blocked ${h.blocked_ms}ms > 60s — forcing restart`);
+          return restartChild();
+        }
+        log(`health OK — RSS ${h.memory_mb}MB, pending ${h.scrape_pending||0}, blocked ${h.blocked_ms}ms (${ms}ms)`);
+      } catch {
+        consecutiveFailures = 0;
+        log(`health OK (no payload yet, ${ms}ms)`);
       }
     });
-    req.on('error', () => {
-      // error fires after req.destroy() from timeout, or ECONNREFUSED
-    });
-    req.end();
-  }, HEALTH_INTERVAL_MS);
+  });
+  req.on('error', (err) => {
+    log(`health ERROR — ${err.code || err.message}`);
+    consecutiveFailures++;
+    if (consecutiveFailures >= MAX_FAILURES) restartChild();
+  });
+  req.end();
 }
 
-// ── Start server ────────────────────────────────────────────
-async function start() {
-  if (await isPortAlreadyUp(PORT)) {
-    console.log(`[bg] ocwrapper already running on port ${PORT}; skipping duplicate start`);
-    return;
-  }
+function startChild() {
+  if (isShuttingDown) return;
+  log(`starting app.js on port ${PORT}...`);
+  consecutiveFailures = 0;
 
-  const child = spawn('node', [...NODE_OPTS, 'app.js', 'server', '--port', PORT], {
-    cwd: __dirname,
-    stdio: ['ignore', 'inherit', 'inherit'],
+  child = spawn('node', [
+    '--expose-gc', '--max-old-space-size=1024',
+    'app.js', 'server', `--port=${PORT}`
+  ], {
+    cwd: BASE,
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+    env: { ...process.env, PORT: String(PORT) },
   });
 
-  const startedAt = Date.now();
-  console.log(`[bg] started PID ${child.pid} on port ${PORT}`);
-
-  // Start health checks after a brief grace period for first scrape
-  setTimeout(() => healthCheck(child), 15000);
-
-  child.on('exit', (code, signal) => {
-    if (isShuttingDown) return;
-    if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
-
-    const elapsed = ((Date.now() - startedAt) / 1000).toFixed(0);
-    console.log(`[bg] server exited after ${elapsed}s (code=${code} signal=${signal})`);
-
-    restartCount++;
-
-    const backoff = Math.min(1000 * Math.pow(2, restartCount - 1), 30000);
-
-    if (elapsed < 5 && code !== 0) {
-      console.log(`[bg] quick exit (${elapsed}s), waiting ${backoff}ms before retry (attempt #${restartCount})…`);
-      setTimeout(start, backoff);
-    } else {
-      console.log(`[bg] restarting… (attempt #${restartCount})`);
-      setImmediate(start);
-    }
+  child.stdout.on('data', (d) => {
+    const text = d.toString();
+    process.stdout.write(`[app:out] ${text}`);
+    try { fs.appendFileSync(path.join(BASE, 'server.log'), text); } catch {}
+  });
+  child.stderr.on('data', (d) => {
+    const text = d.toString();
+    process.stderr.write(`[app:err] ${text}`);
+    try { fs.appendFileSync(path.join(BASE, 'server.log'), `[ERR] ${text}`); } catch {}
   });
 
   child.on('error', (err) => {
-    if (isShuttingDown) return;
-    console.error(`[bg] spawn error: ${err.message}`);
-    setTimeout(start, 5000);
+    log(`spawn error: ${err.message}`);
+    if (!isShuttingDown) setTimeout(startChild, RESTART_DELAY);
+  });
+
+  child.on('exit', (code, sig) => {
+    const why = sig ? `signal ${sig}` : `code ${code}`;
+    log(`child exited (${why})`);
+    child = null;
+    if (!isShuttingDown) {
+      log(`restarting in ${RESTART_DELAY}ms...`);
+      setTimeout(startChild, RESTART_DELAY);
+    }
   });
 }
 
-// ── Clean shutdown ──────────────────────────────────────────
-process.on('SIGINT', () => {
-  isShuttingDown = true;
-  console.log('[bg] SIGINT — exiting');
-  process.exit(0);
-});
-process.on('SIGTERM', () => {
-  isShuttingDown = true;
-  console.log('[bg] SIGTERM — exiting');
-  process.exit(0);
-});
+function restartChild() {
+  if (!child || child.killed) { startChild(); return; }
+  log(`restarting child (failures: ${consecutiveFailures})`);
+  try { process.kill(child.pid, 'SIGTERM'); } catch {}
+  setTimeout(() => {
+    if (child && !child.killed) try { process.kill(child.pid, 'SIGKILL'); } catch {}
+    startChild();
+  }, STOP_TIMEOUT);
+}
 
-start();
+function stop() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  log('shutting down...');
+  if (healthTimer) clearInterval(healthTimer);
+  if (child && !child.killed) {
+    try { process.kill(child.pid, 'SIGTERM'); } catch {}
+    setTimeout(() => process.exit(0), STOP_TIMEOUT);
+  } else {
+    process.exit(0);
+  }
+}
 
-setInterval(() => {}, 30000);
-console.log(`[bg] OpenCode Go launcher (port ${PORT}) — auto-restart + health checks enabled`);
+// ── Main ─────────────────────────────────────────────────
+process.on('SIGTERM', stop);
+process.on('SIGINT', stop);
+
+startChild();
+
+setTimeout(() => {
+  healthTimer = setInterval(healthCheck, HEALTH_INTERVAL);
+  log(`health checks started (every ${HEALTH_INTERVAL/1000}s)`);
+}, 10000);
+
+log(`🚀 OpenCode Go launcher (port ${PORT}) — auto-restart + health checks enabled`);

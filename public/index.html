@@ -197,8 +197,20 @@
     }
     .acct-row.flash { animation: row-in 0.8s ease-out; }
 
-    .acct-name { font-weight: 650; font-size: 14px; line-height: 1.3; word-break: break-all; }
+    .acct-name { font-weight: 650; font-size: 14px; line-height: 1.3; word-break: break-all; display: flex; align-items: center; gap: 6px; }
     @media (min-width: 600px) { .acct-name { font-size: 13px; } }
+    .acct-name-text { min-width: 0; }
+    .btn-rename {
+      background: none; border: none; color: var(--text-tertiary); cursor: pointer;
+      font-size: 11px; padding: 2px; opacity: 0; transition: opacity 0.15s; flex-shrink: 0;
+    }
+    .acct-row:hover .btn-rename { opacity: 0.6; }
+    .btn-rename:hover { opacity: 1 !important; color: var(--blue); }
+    .rename-input {
+      background: var(--bg-elevated); border: 1px solid var(--blue); border-radius: 4px;
+      color: var(--text-primary); font: inherit; padding: 2px 6px; width: 100%; min-width: 0;
+    }
+    .rename-input:focus { outline: none; border-color: var(--green); }
 
     .acct-row-top {
       display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
@@ -561,7 +573,7 @@
         <div class="acct-row" data-account="${txt(a.name)}">
           <div class="acct-row-top">
             <div class="acct-name-block">
-              <div class="acct-name">${txt(a.name)}</div>
+              <div class="acct-name"><span class="acct-name-text" id="name-${txt(a.name)}">${txt(a.name)}</span><button class="btn-rename" data-rename="${txt(a.name)}" title="Rename">✎</button></div>
               <span class="acct-badge">${p}</span>
             </div>
             <div class="acct-right-block">
@@ -588,6 +600,11 @@
 
     acctRows.querySelectorAll('[data-del]').forEach(btn => {
       btn.addEventListener('click', () => delAccount(btn.dataset.del));
+    });
+
+    // Bind rename buttons
+    acctRows.querySelectorAll('[data-rename]').forEach(btn => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); startRename(btn.dataset.rename); });
     });
 
     // Bind reward apply buttons
@@ -620,6 +637,7 @@
     });
     es.addEventListener('add-complete', () => { loadAccounts(); });
     es.addEventListener('reward-applied', () => { loadAccounts(); loadStatus(); });
+    es.addEventListener('account-list', () => { loadAccounts(); });
     es.onerror = () => {
       sseDot.className = 'sse-dot connecting';
       sseLabel.textContent = 'Reconnecting';
@@ -766,6 +784,59 @@
     const p = await r.json();
     if (p.ok) { stEl.textContent = `Deleted ${name}.`; loadAccounts(); }
     else { stEl.innerHTML = `<span class="err">${p.error||'Failed'}</span>`; }
+  }
+
+  function startRename(oldName) {
+    const nameEl = document.getElementById(`name-${oldName}`);
+    if (!nameEl) return;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-input';
+    input.value = oldName;
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+    let committed = false;
+    const commit = async () => {
+      if (committed) return;
+      committed = true;
+      const newName = input.value.trim();
+      if (!newName || newName === oldName) {
+        // Revert
+        const span = document.createElement('span');
+        span.className = 'acct-name-text';
+        span.id = `name-${oldName}`;
+        span.textContent = oldName;
+        input.replaceWith(span);
+        return;
+      }
+      stEl.textContent = `Renaming ${oldName} → ${newName}…`;
+      try {
+        const r = await fetch(`/api/accounts/${encodeURIComponent(oldName)}/rename`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newName })
+        });
+        const p = await r.json();
+        if (p.ok) { stEl.textContent = `Renamed to ${p.name}.`; loadAccounts(); }
+        else { stEl.innerHTML = `<span class="err">${p.error||'Failed'}</span>`; loadAccounts(); }
+      } catch (e) {
+        stEl.innerHTML = `<span class="err">${e.message}</span>`;
+        loadAccounts();
+      }
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') {
+        committed = true;
+        const span = document.createElement('span');
+        span.className = 'acct-name-text';
+        span.id = `name-${oldName}`;
+        span.textContent = oldName;
+        input.replaceWith(span);
+      }
+    });
+    input.addEventListener('blur', commit);
   }
 
   async function refreshAll() {
