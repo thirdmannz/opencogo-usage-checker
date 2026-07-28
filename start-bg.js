@@ -18,7 +18,7 @@ const args = process.argv.slice(2);
 const portIdx = args.indexOf('--port');
 const PORT = portIdx !== -1 ? args[portIdx + 1] : '3333';
 
-const BASE = 'C:\\Projects\\ocwrapper';
+const BASE = __dirname;
 const BG_LOG = path.join(BASE, 'bg.log');
 const HEALTH_INTERVAL = 15000;
 const HEALTH_TIMEOUT = 8000;
@@ -91,7 +91,7 @@ function startChild() {
   log(`starting app.js on port ${PORT}...`);
   consecutiveFailures = 0;
 
-  child = spawn('node', [
+  child = spawn(process.execPath, [
     '--expose-gc', '--max-old-space-size=1024',
     'app.js', 'server', `--port=${PORT}`
   ], {

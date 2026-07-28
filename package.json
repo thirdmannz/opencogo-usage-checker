@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node -e \"const m=require('./app.js'); if (!m.findBrowserExecutable) throw new Error('missing export'); const p=m.findBrowserExecutable(); if (!p) throw new Error('browser not found'); console.log(p)\""
   },
   "keywords": [],
   "author": "",
@@ -12,6 +12,6 @@
   "type": "commonjs",
   "dependencies": {
     "express": "^5.2.1",
-    "playwright": "^1.60.0"
+    "playwright": "^1.61.1"
   }
 }

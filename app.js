@@ -214,27 +214,51 @@ function firstExistingPath(paths) {
 
 function findBrowserExecutable() {
   const home = os.homedir();
-  const candidates = [
+  const envCandidates = [
     process.env.OPENCODE_BROWSER_PATH,
     process.env.CHROME_PATH,
     process.env.PLAYWRIGHT_CHROME_PATH,
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-    path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    path.join(home, 'AppData', 'Local', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
   ];
-  const direct = firstExistingPath(candidates);
+  const platformCandidates = process.platform === 'win32'
+    ? [
+        'C:/Program Files/Google/Chrome/Application/chrome.exe',
+        'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+        path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+        'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+        path.join(home, 'AppData', 'Local', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      ]
+    : [
+        '/usr/bin/google-chrome',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/microsoft-edge',
+        '/snap/bin/chromium',
+        '/snap/bin/google-chrome',
+      ];
+  const direct = firstExistingPath([...envCandidates, ...platformCandidates]);
   if (direct) return direct;
 
-  for (const name of ['chrome.exe', 'chrome', 'msedge.exe', 'msedge']) {
+  const names = process.platform === 'win32'
+    ? ['chrome.exe', 'chrome', 'msedge.exe', 'msedge']
+    : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge'];
+  for (const name of names) {
     try {
-      const result = spawnSync('where.exe', [name], { encoding: 'utf8', windowsHide: true });
+      const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
+      const result = spawnSync(cmd, [name], { encoding: 'utf8', windowsHide: true });
       if (result.status === 0 && result.stdout) {
         const found = result.stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean);
         if (found && fs.existsSync(found)) return found;
       }
+    } catch {}
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      const result = spawnSync('bash', ['-lc', 'command -v google-chrome google-chrome-stable chromium chromium-browser microsoft-edge 2>/dev/null | head -n 1'], { encoding: 'utf8', windowsHide: true });
+      const found = result.stdout?.trim();
+      if (found && fs.existsSync(found)) return found;
     } catch {}
   }
 
@@ -252,6 +276,74 @@ async function getFreePort() {
       server.close(() => resolve(port));
     });
   });
+}
+
+// Resolve a graphical display environment for spawning a visible Chrome.
+// Needed because ocwrapper may run as a systemd --user service started at boot
+// in a non-graphical session (no DISPLAY/WAYLAND_DISPLAY in process.env), so a
+// Chrome spawned with the inherited env has nowhere to open its window.
+// Detects the active user's Xwayland/X11 and Wayland sockets at spawn time.
+function resolveGraphicalDisplayEnv() {
+  const env = {};
+  const uid = process.getuid ? process.getuid() : null;
+  const xdgRuntime = process.env.XDG_RUNTIME_DIR || (uid != null ? `/run/user/${uid}` : null);
+
+  // Wayland: pick the first wayland-N socket in XDG_RUNTIME_DIR owned by us.
+  if (xdgRuntime && !process.env.WAYLAND_DISPLAY) {
+    try {
+      const candidates = fs.readdirSync(xdgRuntime)
+        .filter(n => /^wayland-\d+$/.test(n))
+        .map(n => ({ n, p: path.join(xdgRuntime, n), st: fs.statSync(path.join(xdgRuntime, n)) }))
+        .filter(c => c.st.isSocket() && (!c.st.uid || c.st.uid === uid))
+        .sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
+      if (candidates[0]) env.WAYLAND_DISPLAY = candidates[0].n;
+    } catch {}
+  }
+
+  // X11 / Xwayland: the authoritative source is the user's Xwayland/Xorg
+  // process — its args carry the exact `:N` display and `-auth <file>` pair.
+  // Socket-scan by mtime is unreliable (stale sockets like :1 linger beside :0).
+  if (!process.env.DISPLAY) {
+    try {
+      const ps = spawnSync('ps', ['-o', 'pid,args', '-u', String(uid)], { encoding: 'utf8' });
+      const lines = (ps.stdout || '').split('\n').slice(1);
+      let best = null;
+      for (const line of lines) {
+        const isX = /\b(Xwayland|Xorg)\b/.test(line) && /(^|\s):\d+(\.\d+)?\b/.test(line);
+        if (!isX) continue;
+        const dispM = line.match(/(^|\s)(:\d+(?:\.\d+)?)\b/);
+        const authM = line.match(/-auth\s+(\S+)/);
+        if (dispM) { best = { disp: dispM[2], auth: authM ? authM[1] : null }; break; }
+      }
+      if (best) {
+        env.DISPLAY = best.disp;
+        if (best.auth && fs.existsSync(best.auth)) env.XAUTHORITY = best.auth;
+      } else {
+        // Fallback: any X socket in /tmp/.X11-unix owned by us.
+        const sockDir = '/tmp/.X11-unix';
+        if (fs.existsSync(sockDir)) {
+          const xs = fs.readdirSync(sockDir)
+            .filter(n => /^X\d+$/.test(n))
+            .map(n => ({ disp: `:${n.slice(1)}`, st: fs.statSync(path.join(sockDir, n)) }))
+            .filter(c => c.st.isSocket() && c.st.uid === uid)
+            .sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
+          if (xs[0]) env.DISPLAY = xs[0].disp;
+        }
+      }
+    } catch {}
+  }
+
+  if (xdgRuntime && !process.env.XDG_RUNTIME_DIR) env.XDG_RUNTIME_DIR = xdgRuntime;
+
+  // Xauthority fallback if we still don't have one: ~/.Xauthority.
+  if (env.DISPLAY && !env.XAUTHORITY && !process.env.XAUTHORITY) {
+    const homeXauth = path.join(os.homedir(), '.Xauthority');
+    if (fs.existsSync(homeXauth)) env.XAUTHORITY = homeXauth;
+  }
+
+  const summary = Object.keys(env).map(k => `${k}=${env[k]}`).join(', ') || '(none — relying on process.env)';
+  console.log(`[chrome-display] resolved graphical env: ${summary}`);
+  return env;
 }
 
 async function launchSystemBrowser(loginUrl, userDataDir, ownedName = '') {
@@ -281,6 +373,7 @@ async function launchSystemBrowser(loginUrl, userDataDir, ownedName = '') {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
+    env: { ...process.env, ...resolveGraphicalDisplayEnv() },
   });
   child.unref();
   return { executable, port, child };
@@ -1848,4 +1941,6 @@ Commands:
   }
 }
 
-main().catch(err => { console.error('Fatal:', err.message); process.exit(1); });
+if (require.main === module) main().catch(err => { console.error('Fatal:', err.message); process.exit(1); });
+
+module.exports = { findBrowserExecutable, launchSystemBrowser, launchManualBrowser };
